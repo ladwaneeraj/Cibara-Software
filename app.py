@@ -18,6 +18,7 @@ google_credentials = os.environ.get('GOOGLE_CREDENTIALS')
 credentials_info = json.loads(google_credentials)
 credentials = service_account.Credentials.from_service_account_info(
     credentials_info, scopes=SCOPES)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
