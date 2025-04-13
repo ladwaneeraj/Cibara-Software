@@ -22,8 +22,8 @@ app = Flask(__name__, static_folder='static')
 
 # Google API settings - DEFINE SCOPES BEFORE USING THEM
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-SPREADSHEET_ID = 'your-spreadsheet-id'  # Replace with yours
-DRIVE_FOLDER_ID = 'your-folder-id'  # Replace with yours
+SPREADSHEET_ID = '1oQhNGbuzad2XC9kQwXu2CswaHlxLHhHKgngz1wA9iRo'  # Replace with yours
+DRIVE_FOLDER_ID = '1P4f1lx9w5ay-3Dw4JO3qzjGN8ysTvGt5'  # Replace with yours
 
 # Try to get credentials from environment variable
 try:
@@ -46,7 +46,7 @@ try:
 except Exception as e:
     logger.error(f"Error loading Google credentials: {str(e)}")
     credentials = None
-    
+
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='static')
