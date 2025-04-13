@@ -1,0 +1,430 @@
+/* Calendar View - Complete CSS */
+
+:root {
+  --calendar-day-min-height: 65px;
+  --calendar-day-aspect-ratio: 1/0.8;
+}
+
+/* Calendar container */
+.bookings-calendar-container {
+  margin-top: 1rem;
+  background-color: white;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-sm);
+  padding: 0.75rem;
+  width: 100%;
+  overflow-x: auto;
+}
+
+/* Calendar header with month display and navigation */
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.calendar-header h3 {
+  font-size: 1.1rem;
+  margin: 0;
+  text-align: center;
+  flex: 1;
+  font-weight: 600;
+}
+
+.calendar-nav-btn {
+  background: none;
+  border: none;
+  font-size: 0.9rem;
+  color: var(--primary);
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: var(--transition);
+}
+
+.calendar-nav-btn:hover {
+  background-color: rgba(67, 97, 238, 0.1);
+}
+
+/* Calendar controls section (Today button and legend) */
+.calendar-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+#today-btn {
+  background-color: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius);
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: var(--transition);
+}
+
+#today-btn:hover {
+  background-color: var(--secondary);
+}
+
+/* Legend for booking status indicators */
+.calendar-legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--gray);
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 0.35rem;
+}
+
+.legend-color.confirmed {
+  background-color: var(--primary);
+}
+
+.legend-color.checked-in {
+  background-color: var(--success);
+}
+
+.legend-color.available {
+  background-color: #e8f4fd;
+  border: 1px solid #c5e3f9;
+}
+
+/* Calendar grid container */
+.calendar-grid {
+  width: 100%;
+}
+
+/* Weekday header row */
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.calendar-weekdays div {
+  text-align: center;
+  font-weight: 500;
+  color: var(--gray);
+  padding: 4px 0;
+  font-size: 0.75rem;
+  width: 100%;
+}
+
+/* Calendar days grid */
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+/* Calendar day cell */
+.calendar-day {
+  min-height: var(--calendar-day-min-height);
+  aspect-ratio: var(--calendar-day-aspect-ratio);
+  border-radius: var(--border-radius);
+  padding: 3px;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+  background-color: #f9f9f9;
+  border: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+}
+
+.calendar-day:hover {
+  background-color: #f0f0f0;
+}
+
+/* Days from other months */
+.calendar-day.different-month {
+  opacity: 0.3;
+}
+
+/* Today's cell highlighting */
+.calendar-day.today {
+  background-color: #f8f7ff;
+  border-color: var(--primary);
+}
+
+/* Booking indicators */
+.calendar-day.has-bookings {
+  border-bottom: 3px solid var(--primary);
+}
+
+.calendar-day.has-checkins {
+  border-bottom: 3px solid var(--success);
+}
+
+/* Day number display */
+.day-number {
+  font-weight: 500;
+  margin-bottom: 2px;
+  text-align: center;
+  padding: 2px;
+  font-size: 0.85rem;
+}
+
+.today .day-number {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* Booking count indicator */
+.booking-count {
+  font-size: 0.7rem;
+  color: var(--gray);
+  margin-top: 1px;
+  text-align: center;
+}
+
+.booking-count.has-multiple {
+  font-weight: 500;
+  color: var(--primary);
+}
+
+/* Booking preview snippets */
+.day-booking-preview {
+  font-size: 0.65rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 1px 0;
+  padding: 1px 3px;
+  border-radius: 2px;
+  background-color: rgba(67, 97, 238, 0.1);
+  color: var(--primary);
+}
+
+.day-booking-preview.checked-in {
+  background-color: rgba(46, 196, 182, 0.1);
+  color: var(--success);
+}
+
+/* Day details modal styles */
+.day-bookings-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.day-booking-item {
+  padding: 0.8rem;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.day-booking-item:hover {
+  background-color: #f9f9f9;
+}
+
+.day-booking-item:last-child {
+  border-bottom: none;
+}
+
+.day-booking-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.day-booking-room {
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.day-booking-time {
+  font-size: 0.85rem;
+  color: var(--gray);
+}
+
+.day-booking-guest {
+  margin-bottom: 0.25rem;
+}
+
+.day-booking-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.day-booking-status-badge {
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: var(--primary);
+  color: white;
+}
+
+.day-booking-status-badge.checked-in {
+  background-color: var(--success);
+}
+
+.day-booking-status-badge.cancelled {
+  background-color: var(--danger);
+}
+
+.day-booking-price {
+  font-weight: 500;
+}
+
+/* Modal footer */
+.modal-footer {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+}
+
+/* View selector toggle */
+.view-selector {
+  display: flex;
+  background-color: #f5f7fa;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.view-btn {
+  flex: 1;
+  padding: 0.8rem 1rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.view-btn:hover:not(.active) {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.view-btn.active {
+  background-color: var(--primary);
+  color: white;
+}
+
+/* Available rooms section */
+.room-availability {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+}
+
+.room-availability-title {
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.available-rooms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.available-room-tag {
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  background-color: #e8f4e5;
+  color: var(--success);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* Responsive styles */
+@media (min-width: 1600px) {
+  :root {
+    --calendar-day-min-height: 75px;
+    --calendar-day-aspect-ratio: 1/0.85;
+  }
+}
+
+@media (max-width: 1366px) {
+  :root {
+    --calendar-day-min-height: 60px;
+    --calendar-day-aspect-ratio: 1/0.75;
+  }
+
+  .day-booking-preview {
+    font-size: 0.6rem;
+  }
+}
+
+@media (max-width: 992px) {
+  :root {
+    --calendar-day-min-height: 55px;
+    --calendar-day-aspect-ratio: 1/0.7;
+  }
+
+  .booking-count {
+    font-size: 0.65rem;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --calendar-day-min-height: 50px;
+  }
+
+  .calendar-day {
+    aspect-ratio: auto;
+    min-height: var(--calendar-day-min-height);
+  }
+
+  .day-booking-preview {
+    display: none;
+  }
+}
+
+@media (max-width: 576px) {
+  :root {
+    --calendar-day-min-height: 45px;
+  }
+
+  .calendar-weekdays div {
+    font-size: 0.65rem;
+    padding: 3px 0;
+  }
+
+  .day-number {
+    font-size: 0.75rem;
+  }
+
+  .booking-count {
+    font-size: 0.65rem;
+  }
+
+  .calendar-header h3 {
+    font-size: 1rem;
+  }
+
+  .legend-item {
+    font-size: 0.7rem;
+  }
+}

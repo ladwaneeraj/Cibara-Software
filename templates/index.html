@@ -1,0 +1,1817 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lodge Management System</title>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/booking.css" />
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Header -->
+      <header class="header">
+        <h1>Lodge Manager</h1>
+        <div class="header-actions">
+          <button
+            id="refresh-btn"
+            class="action-btn"
+            style="background: transparent; color: white; padding: 0.5rem"
+            aria-label="Refresh Data"
+          >
+            <i class="fas fa-sync-alt"></i>
+          </button>
+          <button
+            id="settings-btn"
+            class="action-btn"
+            style="background: transparent; color: white; padding: 0.5rem"
+            aria-label="Settings"
+          >
+            <i class="fas fa-cog"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- Dashboard -->
+      <main class="dashboard">
+        <!-- Stats Row -->
+        <!-- Updated Dashboard Stats with Cash/Online Split -->
+        <div class="stats-container">
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: var(--success)">
+              <i class="fas fa-door-open"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Vacant Rooms</h3>
+              <p id="vacant-count">0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: var(--danger)">
+              <i class="fas fa-bed"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Occupied</h3>
+              <p id="occupied-count">0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: #27ae60">
+              <i class="fas fa-money-bill-wave"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Today's Cash</h3>
+              <p id="today-cash">₹0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: #2980b9">
+              <i class="fas fa-mobile-alt"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Today's Online</h3>
+              <p id="today-online">₹0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: var(--primary)">
+              <i class="fas fa-chart-line"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Total Revenue</h3>
+              <p id="today-revenue">₹0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: var(--warning)">
+              <i class="fas fa-exclamation-circle"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Pending Balance</h3>
+              <p id="pending-balance">₹0</p>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon" style="background-color: var(--danger)">
+              <i class="fas fa-money-bill-wave-alt"></i>
+            </div>
+            <div class="stat-info">
+              <h3>Daily Expenses</h3>
+              <p id="today-expense">₹0</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rooms Tab Content -->
+        <div class="tab-content active" id="rooms-tab">
+          <div class="section-title">
+            <h2>All Rooms</h2>
+            <div>
+              <button id="add-room-btn" class="action-btn btn-sm btn-primary">
+                <i class="fas fa-plus"></i> Add Room
+              </button>
+            </div>
+          </div>
+
+          <!-- Search -->
+          <div class="search-container">
+            <i class="fas fa-search search-icon"></i>
+            <input
+              type="text"
+              id="room-search"
+              class="search-input"
+              placeholder="Search room or guest..."
+              aria-label="Search rooms or guests"
+            />
+          </div>
+
+          <!-- Filters -->
+          <div class="filter-container">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="vacant">Vacant</button>
+            <button class="filter-btn" data-filter="occupied">Occupied</button>
+            <button class="filter-btn" data-filter="balances">
+              Pending Balances
+            </button>
+          </div>
+
+          <!-- Floor Selection -->
+          <div class="floor-selector">
+            <button class="floor-btn active" data-floor="all">
+              All Floors
+            </button>
+            <button class="floor-btn" data-floor="first">First Floor</button>
+            <button class="floor-btn" data-floor="second">Second Floor</button>
+          </div>
+
+          <!-- Rooms Grid -->
+          <div class="rooms-grid" id="rooms-grid">
+            <!-- Rooms will be dynamically populated here -->
+            <div class="loading-indicator">
+              <span class="loader"></span>
+              <p>Loading rooms...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Transactions Tab Content -->
+        <div class="tab-content hidden" id="transactions-tab">
+          <div class="section-title">
+            <h2>Today's Transactions</h2>
+            <button id="add-expense-btn" class="action-btn btn-sm btn-danger">
+              <i class="fas fa-plus"></i> Add Expense
+            </button>
+          </div>
+
+          <!-- Logs -->
+          <div class="logs-container">
+            <h3 style="margin-bottom: 1rem">Transaction Log</h3>
+            <div id="transaction-log">
+              <!-- Logs will be dynamically populated here -->
+              <div class="loading-indicator">
+                <span class="loader"></span>
+                <p>Loading transactions...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reports Tab Content -->
+        <!-- Password Modal for Reports -->
+        <div class="modal-backdrop" id="password-modal">
+          <div class="modal-content" style="max-width: 380px">
+            <div class="modal-header">
+              <h2>Enter Password</h2>
+              <button class="close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="report-password">Password</label>
+              <input
+                type="password"
+                id="report-password"
+                class="form-control"
+                placeholder="Enter password"
+              />
+              <div
+                id="password-error"
+                class="error-message"
+                style="color: var(--danger); margin-top: 0.5rem; display: none"
+              >
+                Incorrect password. Please try again.
+              </div>
+            </div>
+            <div class="action-row">
+              <button id="password-cancel-btn" class="action-btn btn-secondary">
+                Cancel
+              </button>
+              <button id="password-submit-btn" class="action-btn btn-primary">
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reports Tab Content -->
+        <div class="tab-content hidden" id="reports-tab">
+          <div class="section-title">
+            <h2>Analytics & Reports</h2>
+            <button
+              id="add-report-expense-btn"
+              class="action-btn btn-sm btn-danger"
+            >
+              <i class="fas fa-plus"></i> Add Report Expense
+            </button>
+          </div>
+
+          <!-- Date Filter (Keep the existing one) -->
+          <div class="date-filter">
+            <input
+              type="date"
+              class="form-control date-input"
+              id="start-date"
+              aria-label="Start Date"
+            />
+            <input
+              type="date"
+              class="form-control date-input"
+              id="end-date"
+              aria-label="End Date"
+            />
+            <button
+              id="apply-report-filter"
+              class="action-btn btn-primary"
+              style="margin-top: 0"
+            >
+              Apply
+            </button>
+          </div>
+
+          <!-- Analytics/Reports Selector -->
+          <div class="view-selector">
+            <button class="view-btn active" data-view="analytics">
+              Analytics
+            </button>
+            <button class="view-btn" data-view="reports">Reports</button>
+          </div>
+
+          <!-- Analytics View -->
+          <div id="analytics-view" class="view-content">
+            <!-- Will be filled dynamically -->
+          </div>
+
+          <!-- Reports View -->
+          <div id="reports-view" class="view-content hidden">
+            <div class="summary-card">
+              <div class="summary-title">
+                Revenue Report <span id="report-date-range"></span>
+              </div>
+              <div class="summary-row">
+                <div class="summary-label">Cash Payments</div>
+                <div class="summary-value" id="report-cash-total">₹0</div>
+              </div>
+              <div class="summary-row">
+                <div class="summary-label">Online Payments</div>
+                <div class="summary-value" id="report-online-total">₹0</div>
+              </div>
+              <div class="summary-row">
+                <div class="summary-label">Add-ons & Services</div>
+                <div class="summary-value" id="report-addon-total">₹0</div>
+              </div>
+              <div class="summary-row">
+                <div class="summary-label">Refunds</div>
+                <div class="summary-value" id="report-refund-total">₹0</div>
+              </div>
+              <div class="summary-row">
+                <div class="summary-label">Daily Expenses</div>
+                <div
+                  class="summary-value"
+                  id="report-expense-total"
+                  style="color: var(--danger)"
+                >
+                  ₹0
+                </div>
+              </div>
+              <div class="summary-row total-row">
+                <div class="summary-label">Total Net Revenue</div>
+                <div class="summary-value" id="report-net-revenue">₹0</div>
+              </div>
+            </div>
+
+            <!-- Transaction logs -->
+            <div id="report-content">
+              <!-- Logs will be dynamically populated here -->
+              <div class="loading-indicator hidden">
+                <span class="loader"></span>
+                <p>Generating report...</p>
+              </div>
+              <div class="empty-state">
+                <i class="fas fa-chart-line fa-3x"></i>
+                <p>Select a date range and click Apply to generate a report</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-content hidden" id="bookings-tab">
+          <div class="section-title">
+            <h2>Room Bookings</h2>
+            <button id="new-booking-btn" class="action-btn btn-sm btn-primary">
+              <i class="fas fa-plus"></i> New Booking
+            </button>
+          </div>
+
+          <!-- Booking Filters -->
+          <div class="filter-container">
+            <button class="booking-filter-btn active" data-filter="upcoming">
+              Upcoming
+            </button>
+            <button class="booking-filter-btn" data-filter="today">
+              Today
+            </button>
+            <button class="booking-filter-btn" data-filter="all">All</button>
+            <button class="booking-filter-btn" data-filter="completed">
+              Checked In
+            </button>
+            <button class="booking-filter-btn" data-filter="cancelled">
+              Cancelled
+            </button>
+          </div>
+
+          <div class="view-selector">
+            <button class="view-btn active" data-view="list">
+              <i class="fas fa-list"></i> List View
+            </button>
+            <button class="view-btn" data-view="calendar">
+              <i class="fas fa-calendar-alt"></i> Calendar View
+            </button>
+          </div>
+
+          <!-- Bookings List -->
+          <div class="bookings-container" id="bookings-list">
+            <!-- Bookings will be populated here -->
+            <div class="loading-indicator">
+              <span class="loader"></span>
+              <p>Loading bookings...</p>
+            </div>
+          </div>
+          <!-- Add this after the bookings-container div -->
+          <div
+            class="bookings-calendar-container hidden"
+            id="bookings-calendar-view"
+          >
+            <div class="calendar-header">
+              <button id="prev-month-btn" class="calendar-nav-btn">
+                <i class="fas fa-chevron-left"></i>
+              </button>
+              <h3 id="calendar-title">Month Year</h3>
+              <button id="next-month-btn" class="calendar-nav-btn">
+                <i class="fas fa-chevron-right"></i>
+              </button>
+            </div>
+
+            <div class="calendar-controls">
+              <button id="today-btn" class="action-btn btn-sm">Today</button>
+              <div class="calendar-legend">
+                <span class="legend-item">
+                  <span class="legend-color confirmed"></span> Confirmed
+                </span>
+                <span class="legend-item">
+                  <span class="legend-color checked-in"></span> Checked In
+                </span>
+                <span class="legend-item">
+                  <span class="legend-color available"></span> Available
+                </span>
+              </div>
+            </div>
+
+            <div class="calendar-grid">
+              <div class="calendar-weekdays">
+                <div>Sun</div>
+                <div>Mon</div>
+                <div>Tue</div>
+                <div>Wed</div>
+                <div>Thu</div>
+                <div>Fri</div>
+                <div>Sat</div>
+              </div>
+              <div class="calendar-days" id="calendar-days-grid">
+                <!-- Days will be dynamically generated here -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Day Details Modal -->
+          <div class="modal-backdrop" id="day-details-modal">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h2>Bookings for <span id="selected-date">Date</span></h2>
+                <button class="close-btn" aria-label="Close">&times;</button>
+              </div>
+
+              <div class="day-bookings-list" id="day-bookings-list">
+                <!-- Bookings for the selected day will be shown here -->
+              </div>
+
+              <div class="modal-footer">
+                <button
+                  id="new-booking-for-day-btn"
+                  class="action-btn btn-primary"
+                >
+                  <i class="fas fa-plus"></i> New Booking for This Date
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Bottom Navigation -->
+      <nav class="bottom-nav">
+        <div class="nav-item active" data-tab="rooms">
+          <div class="nav-icon"><i class="fas fa-bed"></i></div>
+          <div class="nav-label">Rooms</div>
+        </div>
+        <div class="nav-item" data-tab="transactions">
+          <div class="nav-icon"><i class="fas fa-receipt"></i></div>
+          <div class="nav-label">Transactions</div>
+        </div>
+        <div class="nav-item" data-tab="bookings">
+          <div class="nav-icon"><i class="fas fa-calendar-alt"></i></div>
+          <div class="nav-label">Bookings</div>
+        </div>
+        <div class="nav-item" data-tab="reports">
+          <div class="nav-icon"><i class="fas fa-chart-bar"></i></div>
+          <div class="nav-label">Reports</div>
+        </div>
+      </nav>
+    </div>
+
+    <!-- Check-in Modal with Room Dropdown -->
+    <div class="modal-backdrop" id="checkin-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>
+            Check-in Room
+            <select id="checkin-room-dropdown" class="room-dropdown">
+              <!-- Room numbers will be dynamically populated here -->
+            </select>
+          </h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <form id="checkin-form">
+          <div class="form-group">
+            <label class="form-label" for="guest-name">Guest Name</label>
+            <input
+              type="text"
+              class="form-control"
+              id="guest-name"
+              placeholder="Full name"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guest-mobile">Mobile Number</label>
+            <input
+              type="tel"
+              class="form-control"
+              id="guest-mobile"
+              placeholder="10-digit mobile number"
+              required
+              pattern="[0-9]{10}"
+              title="Please enter a valid 10-digit mobile number"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="room-price">Room Price (₹)</label>
+            <input
+              type="number"
+              class="form-control"
+              id="room-price"
+              placeholder="Enter room price"
+              required
+              min="1"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="guest-count">Number of Guests</label>
+            <input
+              type="number"
+              class="form-control"
+              id="guest-count"
+              placeholder="Number of guests"
+              min="1"
+              required
+            />
+          </div>
+
+          <!-- Photo Upload and Camera Capture -->
+          <div class="form-group">
+            <label class="form-label">Guest Photo</label>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem">
+              <input
+                type="file"
+                id="guest-photo"
+                accept="image/*"
+                class="form-control"
+                style="flex: 2"
+              />
+              <button
+                type="button"
+                id="camera-btn"
+                class="action-btn"
+                style="
+                  flex: 1;
+                  background-color: var(--secondary);
+                  color: white;
+                "
+              >
+                <i class="fas fa-camera"></i> Camera
+              </button>
+            </div>
+            <div
+              id="photo-preview-container"
+              style="display: none; margin-top: 1rem"
+            >
+              <img
+                id="photo-preview"
+                style="max-width: 100%; max-height: 200px; border-radius: 8px"
+                alt="Guest photo preview"
+              />
+              <button
+                type="button"
+                id="retake-photo-btn"
+                class="action-btn btn-danger"
+                style="margin-top: 0.5rem; padding: 0.5rem"
+              >
+                Retake Photo
+              </button>
+            </div>
+            <div id="camera-container" style="display: none; margin-top: 1rem">
+              <video
+                id="camera-feed"
+                style="width: 100%; border-radius: 8px"
+                autoplay
+                playsinline
+              ></video>
+              <button
+                type="button"
+                id="capture-photo-btn"
+                class="action-btn btn-primary"
+                style="margin-top: 0.5rem; padding: 0.5rem"
+              >
+                <i class="fas fa-camera"></i> Capture
+              </button>
+              <button
+                type="button"
+                id="cancel-camera-btn"
+                class="action-btn btn-danger"
+                style="margin-top: 0.5rem; padding: 0.5rem"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="amount-paid">Amount Paid (₹)</label>
+            <input
+              type="number"
+              class="form-control"
+              id="amount-paid"
+              placeholder="Enter amount paid"
+              required
+              min="0"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <div class="payment-options">
+              <button
+                type="button"
+                class="payment-btn cash active"
+                data-payment="cash"
+              >
+                <i class="fas fa-money-bill"></i> Cash
+              </button>
+              <button
+                type="button"
+                class="payment-btn online"
+                data-payment="online"
+              >
+                <i class="fas fa-mobile-alt"></i> Online
+              </button>
+              <button
+                type="button"
+                class="payment-btn balance"
+                data-payment="balance"
+              >
+                <i class="fas fa-clock"></i> Later
+              </button>
+            </div>
+            <input type="hidden" id="payment-method" value="cash" />
+          </div>
+          <button type="submit" class="action-btn btn-primary">
+            Complete Check-in
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div class="modal-backdrop" id="checkout-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Checkout - Room <span id="checkout-room-number"></span></h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="guest-details">
+          <div class="detail-row">
+            <div class="detail-label">Guest Name</div>
+            <div class="detail-value" id="checkout-guest-name"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Mobile</div>
+            <div class="detail-value">
+              <a href="tel:" id="checkout-guest-mobile" class="call-link">
+                <i class="fas fa-phone"></i>
+                <span id="checkout-mobile-number"></span>
+              </a>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Check-in Time</div>
+            <div
+              class="detail-value"
+              style="display: flex; align-items: center"
+            >
+              <span id="checkout-checkin-time"></span>
+              <button
+                id="edit-checkin-time"
+                style="
+                  margin-left: 8px;
+                  background: none;
+                  border: none;
+                  color: var(--primary);
+                  cursor: pointer;
+                "
+                aria-label="Edit check-in time"
+              >
+                <i class="fas fa-edit"></i>
+              </button>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Room Price</div>
+            <div class="detail-value" id="checkout-room-price"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Balance Due</div>
+            <div class="detail-value" id="checkout-balance">₹0</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Stay Status</div>
+            <div class="detail-value" id="checkout-stay-status">
+              <span id="checkout-day-count">Day 1</span>
+              <span id="checkout-renewal-status" class="status-tag waiting"
+                >Waiting</span
+              >
+            </div>
+          </div>
+          <!-- Guest Photo -->
+          <div
+            id="checkout-photo-container"
+            style="margin-top: 1rem; text-align: center; display: none"
+          >
+            <h4
+              style="
+                margin-bottom: 0.5rem;
+                font-size: 0.9rem;
+                color: var(--gray);
+              "
+            >
+              Guest Photo
+            </h4>
+            <img
+              id="checkout-guest-photo"
+              style="
+                max-width: 100%;
+                max-height: 200px;
+                border-radius: 8px;
+                border: 1px solid #eee;
+              "
+              alt="Guest photo"
+            />
+          </div>
+        </div>
+
+        <!-- Add-on Services - Redesigned UI -->
+        <div class="add-on-section" style="margin-top: 1.5rem">
+          <h3 style="margin-bottom: 1rem">Add Services</h3>
+          <div class="services-grid">
+            <button class="service-btn" data-service="Water 2L" data-price="30">
+              <i class="fas fa-tint"></i>
+              <span>Water 2L</span>
+              <span class="service-price">₹30</span>
+            </button>
+            <button class="service-btn" data-service="Water 1L" data-price="20">
+              <i class="fas fa-tint"></i>
+              <span>Water 1L</span>
+              <span class="service-price">₹20</span>
+            </button>
+            <button class="service-btn" data-service="Extra Bed" data-price="">
+              <i class="fas fa-bed"></i>
+              <span>Extra Bed</span>
+              <span class="service-price">Custom</span>
+            </button>
+            <button class="service-btn" data-service="Other" data-price="">
+              <i class="fas fa-plus"></i>
+              <span>Other</span>
+              <span class="service-price">Custom</span>
+            </button>
+          </div>
+
+          <!-- Service Form (appears when a service is selected) -->
+          <div id="service-form" class="hidden">
+            <div class="form-group" style="margin-top: 1rem">
+              <label class="form-label" for="service-name">Service</label>
+              <input
+                type="text"
+                id="service-name"
+                class="form-control"
+                readonly
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="service-price">Price (₹)</label>
+              <input
+                type="number"
+                id="service-price"
+                class="form-control"
+                min="1"
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Payment Method</label>
+              <div class="payment-options">
+                <button
+                  type="button"
+                  class="payment-btn cash active"
+                  data-payment="cash"
+                >
+                  <i class="fas fa-money-bill"></i> Cash
+                </button>
+                <button
+                  type="button"
+                  class="payment-btn online"
+                  data-payment="online"
+                >
+                  <i class="fas fa-mobile-alt"></i> Online
+                </button>
+                <button
+                  type="button"
+                  class="payment-btn balance"
+                  data-payment="balance"
+                >
+                  <i class="fas fa-clock"></i> Later
+                </button>
+              </div>
+              <input type="hidden" id="service-payment-method" value="cash" />
+            </div>
+            <div class="action-row">
+              <button id="cancel-service-btn" class="action-btn btn-secondary">
+                Cancel
+              </button>
+              <button id="add-service-btn" class="action-btn btn-success">
+                Add Service
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="payment-logs-container">
+          <h3 style="margin-bottom: 1rem">Payment History</h3>
+          <div id="checkout-payment-logs">
+            <!-- Payment logs will be listed here -->
+            <div class="loading-indicator">
+              <span class="loader"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clear Balance or Process Refund Section -->
+        <div id="payment-or-refund-section">
+          <!-- This section will be dynamically populated based on balance -->
+        </div>
+
+        <div class="action-row" style="margin-top: 1.5rem">
+          <button class="action-btn btn-danger" id="cancel-checkout-btn">
+            Cancel
+          </button>
+          <button class="action-btn btn-success" id="confirm-checkout-btn">
+            Complete Checkout
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Check-in Time Modal -->
+    <div class="modal-backdrop" id="edit-time-modal">
+      <div class="modal-content" style="max-width: 400px">
+        <div class="modal-header">
+          <h2>Edit Check-in Time</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <form id="edit-time-form">
+          <div class="form-group">
+            <label class="form-label" for="new-checkin-date">Date</label>
+            <input
+              type="date"
+              class="form-control"
+              id="new-checkin-date"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="new-checkin-time">Time</label>
+            <input
+              type="time"
+              class="form-control"
+              id="new-checkin-time"
+              required
+            />
+          </div>
+          <button type="submit" class="action-btn btn-primary">
+            Update Check-in Time
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Rent Renewal Modal -->
+    <div class="modal-backdrop" id="rent-renewal-modal">
+      <div class="modal-content" style="max-width: 450px">
+        <div class="modal-header">
+          <h2>Rooms Due for Renewal</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <div id="renewal-list">
+          <!-- Will be populated with rooms due for renewal -->
+          <div class="loading-indicator">
+            <span class="loader"></span>
+            <p>Checking for renewals...</p>
+          </div>
+        </div>
+        <button
+          class="action-btn btn-warning"
+          id="renew-all-btn"
+          style="margin-top: 1rem"
+        >
+          Renew All Due Rooms
+        </button>
+      </div>
+    </div>
+
+    <!-- Room Details Modal -->
+    <div class="modal-backdrop" id="room-details-modal">
+      <div class="modal-content" style="max-width: 400px">
+        <div class="modal-header">
+          <h2>Room <span id="detail-room-number"></span> Details</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <div id="room-details-content">
+          <!-- Content will be populated dynamically -->
+          <div class="loading-indicator">
+            <span class="loader"></span>
+          </div>
+        </div>
+        <div class="action-row" style="margin-top: 1rem">
+          <button
+            class="action-btn"
+            id="room-details-checkin-btn"
+            style="background-color: var(--vacant)"
+          >
+            Check In
+          </button>
+          <button
+            class="action-btn"
+            id="room-details-checkout-btn"
+            style="background-color: var(--occupied)"
+          >
+            Check Out
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Room Modal -->
+    <div class="modal-backdrop" id="add-room-modal">
+      <div class="modal-content" style="max-width: 400px">
+        <div class="modal-header">
+          <h2>Add New Room</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <form id="add-room-form">
+          <div class="form-group">
+            <label class="form-label" for="new-room-number">Room Number</label>
+            <input
+              type="text"
+              class="form-control"
+              id="new-room-number"
+              placeholder="Enter room number"
+              required
+              pattern="[0-9]+"
+              title="Please enter a valid room number (numbers only)"
+            />
+          </div>
+          <button type="submit" class="action-btn btn-primary">Add Room</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification-container"></div>
+
+    <!-- Quick Action Floating Button -->
+    <div class="quick-actions-container">
+      <div
+        class="quick-action-btn"
+        id="quick-action-toggle"
+        aria-label="Quick Actions"
+      >
+        <i class="fas fa-bolt"></i>
+      </div>
+      <div class="quick-action-menu">
+        <div class="quick-action-item" id="quick-renew-btn">
+          <i class="fas fa-sync-alt"></i>
+          <span>Renewals Due</span>
+        </div>
+        <!-- New Transfer Room button -->
+        <div class="quick-action-item" id="quick-transfer-btn">
+          <i class="fas fa-exchange-alt"></i>
+          <span>Transfer Room</span>
+        </div>
+      </div>
+    </div>
+    <!-- Checkout Confirmation Modal -->
+    <div class="modal-backdrop" id="checkout-confirm-modal">
+      <div class="modal-content" style="max-width: 400px">
+        <div class="modal-header">
+          <h2>Confirm Checkout</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <div style="text-align: center; padding: 1rem">
+          <i
+            class="fas fa-exclamation-circle"
+            style="font-size: 3rem; color: var(--warning); margin-bottom: 1rem"
+          ></i>
+          <p style="margin-bottom: 1.5rem">
+            Are you sure you want to checkout this guest?
+          </p>
+          <p>
+            <strong>Room: <span id="confirm-checkout-room"></span></strong>
+          </p>
+          <p>
+            <strong>Guest: <span id="confirm-checkout-guest"></span></strong>
+          </p>
+        </div>
+        <div class="action-row">
+          <button
+            class="action-btn btn-secondary"
+            id="cancel-confirm-checkout-btn"
+          >
+            Cancel
+          </button>
+          <button class="action-btn btn-danger" id="proceed-checkout-btn">
+            Yes, Checkout
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Transfer Modal -->
+    <div class="modal-backdrop" id="quick-transfer-modal">
+      <div class="modal-content" style="max-width: 400px">
+        <div class="modal-header">
+          <h2>Quick Room Transfer</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <form id="quick-transfer-form">
+          <div class="form-group">
+            <label class="form-label" for="quick-source-room"
+              >Source Room</label
+            >
+            <select id="quick-source-room" class="form-control" required>
+              <option value="">Select source room</option>
+              <!-- Occupied rooms will be populated here -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="quick-dest-room"
+              >Destination Room</label
+            >
+            <select id="quick-dest-room" class="form-control" required>
+              <option value="">Select destination room</option>
+              <!-- Vacant rooms will be populated here -->
+            </select>
+          </div>
+          <div class="form-group" id="quick-guest-info" style="display: none">
+            <label class="form-label">Guest Information</label>
+            <div class="form-control-static" id="quick-guest-name"></div>
+          </div>
+          <div class="form-group" id="quick-balance-info" style="display: none">
+            <label class="form-label">Current Balance</label>
+            <div class="form-control-static" id="quick-balance"></div>
+          </div>
+          <div class="action-row">
+            <button
+              type="button"
+              class="action-btn btn-secondary"
+              id="cancel-quick-transfer-btn"
+            >
+              Cancel
+            </button>
+            <button type="submit" class="action-btn btn-primary">
+              Transfer Room
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <!-- Add the Expense Modal -->
+    <div class="modal-backdrop" id="expense-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Add Expense</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <form id="expense-form">
+          <div class="form-group">
+            <label class="form-label" for="expense-date">Date</label>
+            <input
+              type="date"
+              class="form-control"
+              id="expense-date"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="expense-category">Category</label>
+            <select class="form-control" id="expense-category" required>
+              <option value="">Select Category</option>
+              <option value="salary">Salary</option>
+              <option value="advance">Advance</option>
+              <option value="utilities">Utilities</option>
+              <option value="purchase">Purchase</option>
+              <option value="sanitary">Sanitary</option>
+              <option value="rent">Rent</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="others">Others</option>
+            </select>
+          </div>
+          <div class="form-group" id="expense-description-container">
+            <label class="form-label" for="expense-description"
+              >Description</label
+            >
+            <input
+              type="text"
+              class="form-control"
+              id="expense-description"
+              placeholder="Expense description"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="expense-amount">Amount (₹)</label>
+            <input
+              type="number"
+              class="form-control"
+              id="expense-amount"
+              placeholder="Enter amount"
+              required
+              min="1"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <div class="payment-options">
+              <button
+                type="button"
+                class="payment-btn cash active"
+                data-payment="cash"
+              >
+                <i class="fas fa-money-bill"></i> Cash
+              </button>
+              <button
+                type="button"
+                class="payment-btn online"
+                data-payment="online"
+              >
+                <i class="fas fa-mobile-alt"></i> Online
+              </button>
+            </div>
+            <input type="hidden" id="expense-payment-method" value="cash" />
+          </div>
+          <input type="hidden" id="expense-type" value="transaction" />
+          <button type="submit" class="action-btn btn-danger">
+            Add Expense
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- New Booking Modal -->
+    <div class="modal-backdrop" id="new-booking-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>New Booking</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+        <form id="booking-form">
+          <div class="form-group">
+            <label class="form-label" for="booking-check-in"
+              >Check-in Date</label
+            >
+            <input
+              type="date"
+              class="form-control"
+              id="booking-check-in"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-check-out"
+              >Check-out Date</label
+            >
+            <input
+              type="date"
+              class="form-control"
+              id="booking-check-out"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-room">Select Room</label>
+            <select class="form-control" id="booking-room" required>
+              <option value="">Select dates to check availability</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-guest-name"
+              >Guest Name</label
+            >
+            <input
+              type="text"
+              class="form-control"
+              id="booking-guest-name"
+              placeholder="Full name"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-guest-mobile"
+              >Mobile Number</label
+            >
+            <input
+              type="tel"
+              class="form-control"
+              id="booking-guest-mobile"
+              placeholder="10-digit mobile number"
+              required
+              pattern="[0-9]{10}"
+              title="Please enter a valid 10-digit mobile number"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-guest-count"
+              >Number of Guests</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="booking-guest-count"
+              placeholder="Number of guests"
+              min="1"
+              value="1"
+              required
+            />
+          </div>
+
+          <!-- Photo Upload and Camera Capture -->
+          <div class="form-group">
+            <label class="form-label">Guest Photo (Optional)</label>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem">
+              <input
+                type="file"
+                id="booking-guest-photo"
+                accept="image/*"
+                class="form-control"
+                style="flex: 2"
+              />
+              <button
+                type="button"
+                id="booking-camera-btn"
+                class="action-btn"
+                style="
+                  flex: 1;
+                  background-color: var(--secondary);
+                  color: white;
+                "
+              >
+                <i class="fas fa-camera"></i> Camera
+              </button>
+            </div>
+            <div
+              id="booking-photo-preview-container"
+              style="display: none; margin-top: 1rem"
+            >
+              <img
+                id="booking-photo-preview"
+                style="max-width: 100%; max-height: 200px; border-radius: 8px"
+                alt="Guest photo preview"
+              />
+              <button
+                type="button"
+                id="booking-retake-photo-btn"
+                class="action-btn btn-danger"
+                style="margin-top: 0.5rem; padding: 0.5rem"
+              >
+                Retake Photo
+              </button>
+            </div>
+            <div
+              id="booking-camera-container"
+              style="display: none; margin-top: 1rem"
+            >
+              <video
+                id="booking-camera-feed"
+                style="width: 100%; border-radius: 8px"
+                autoplay
+                playsinline
+              ></video>
+              <button
+                type="button"
+                id="booking-capture-photo-btn"
+                class="action-btn btn-primary"
+                style="margin-top: 0.5rem; padding: 0.5rem"
+              >
+                <i class="fas fa-camera"></i> Capture
+              </button>
+              <button
+                type="button"
+                id="booking-cancel-camera-btn"
+                class="action-btn btn-danger"
+                style="margin-top: 0.5rem; padding: 0.5rem"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="booking-total-amount"
+              >Total Amount (₹)</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="booking-total-amount"
+              placeholder="Enter total amount"
+              required
+              min="1"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-partial-payment"
+              >Advance Payment (₹)</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="booking-partial-payment"
+              placeholder="Enter advance payment (optional)"
+              min="0"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Remaining Amount</label>
+            <div class="form-value" id="booking-remaining-amount">₹0</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <div class="payment-options">
+              <button
+                type="button"
+                class="payment-btn cash active"
+                data-payment="cash"
+              >
+                <i class="fas fa-money-bill"></i> Cash
+              </button>
+              <button
+                type="button"
+                class="payment-btn online"
+                data-payment="online"
+              >
+                <i class="fas fa-mobile-alt"></i> Online
+              </button>
+            </div>
+            <input type="hidden" id="booking-payment-method" value="cash" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="booking-notes"
+              >Notes (Optional)</label
+            >
+            <textarea
+              class="form-control"
+              id="booking-notes"
+              placeholder="Add any special requests or notes"
+              rows="3"
+            ></textarea>
+          </div>
+          <button type="submit" class="action-btn btn-primary">
+            Create Booking
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Booking Details Modal -->
+    <div class="modal-backdrop" id="booking-details-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Booking Details</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="booking-details">
+          <div class="detail-row">
+            <div class="detail-label">Booking ID</div>
+            <div class="detail-value" id="details-booking-id"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Room</div>
+            <div class="detail-value" id="details-room-number"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Guest Name</div>
+            <div class="detail-value" id="details-guest-name"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Mobile</div>
+            <div class="detail-value">
+              <a href="tel:" id="details-guest-mobile-link" class="call-link">
+                <i class="fas fa-phone"></i>
+                <span id="details-guest-mobile"></span>
+              </a>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Check-in Date</div>
+            <div class="detail-value" id="details-check-in"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Check-out Date</div>
+            <div class="detail-value" id="details-check-out"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Duration</div>
+            <div class="detail-value" id="details-nights"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Number of Guests</div>
+            <div class="detail-value" id="details-guests"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Booking Date</div>
+            <div class="detail-value" id="details-booking-date"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Total Amount</div>
+            <div class="detail-value" id="details-total-amount"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Paid Amount</div>
+            <div class="detail-value" id="details-paid-amount"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Balance</div>
+            <div class="detail-value" id="details-balance"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Status</div>
+            <div class="detail-value" id="details-status"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Notes</div>
+            <div class="detail-value" id="details-notes"></div>
+          </div>
+
+          <!-- Guest Photo -->
+          <div
+            id="details-photo-container"
+            style="margin-top: 1rem; text-align: center; display: none"
+          >
+            <h4
+              style="
+                margin-bottom: 0.5rem;
+                font-size: 0.9rem;
+                color: var(--gray);
+              "
+            >
+              Guest Photo
+            </h4>
+            <img
+              id="details-guest-photo"
+              style="
+                max-width: 100%;
+                max-height: 200px;
+                border-radius: 8px;
+                border: 1px solid #eee;
+              "
+              alt="Guest photo"
+            />
+          </div>
+        </div>
+
+        <div class="action-row" style="margin-top: 1.5rem">
+          <button class="action-btn btn-primary" id="update-booking-btn">
+            <i class="fas fa-edit"></i> Edit
+          </button>
+          <button class="action-btn btn-success" id="convert-booking-btn">
+            <i class="fas fa-check-circle"></i> Check In
+          </button>
+          <button class="action-btn btn-warning" id="add-payment-btn">
+            <i class="fas fa-money-bill-wave"></i> Add Payment
+          </button>
+          <button class="action-btn btn-danger" id="cancel-booking-btn">
+            <i class="fas fa-times-circle"></i> Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Convert Booking to Check-in Modal -->
+    <div class="modal-backdrop" id="convert-booking-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Check In Guest</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <form id="convert-booking-form">
+          <input type="hidden" id="convert-booking-id" />
+
+          <div class="summary-card">
+            <div class="summary-title">Booking Summary</div>
+            <div class="summary-row">
+              <div class="summary-label">Room</div>
+              <div class="summary-value" id="convert-room-number"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Guest</div>
+              <div class="summary-value" id="convert-guest-name"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Check-in Date</div>
+              <div class="summary-value" id="convert-check-in"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Total Amount</div>
+              <div class="summary-value" id="convert-total-amount"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Paid Amount</div>
+              <div class="summary-value" id="convert-paid-amount"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Remaining Balance</div>
+              <div class="summary-value" id="convert-balance"></div>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 1.5rem">
+            <label class="form-label" for="convert-remaining-payment"
+              >Payment Amount (₹)</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="convert-remaining-payment"
+              placeholder="Enter amount to pay now"
+              min="0"
+            />
+            <small class="form-helper"
+              >Leave as 0 to transfer balance to room.</small
+            >
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <div class="payment-options">
+              <button
+                type="button"
+                class="payment-btn cash active"
+                data-payment="cash"
+              >
+                <i class="fas fa-money-bill"></i> Cash
+              </button>
+              <button
+                type="button"
+                class="payment-btn online"
+                data-payment="online"
+              >
+                <i class="fas fa-mobile-alt"></i> Online
+              </button>
+            </div>
+            <input type="hidden" id="convert-payment-method" value="cash" />
+          </div>
+
+          <button type="submit" class="action-btn btn-success">
+            Complete Check-in
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Cancel Booking Modal -->
+    <div class="modal-backdrop" id="cancel-booking-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Cancel Booking</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <form id="cancel-booking-form">
+          <input type="hidden" id="cancel-booking-id" />
+
+          <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            <p>Are you sure you want to cancel this booking?</p>
+          </div>
+
+          <div class="summary-card">
+            <div class="summary-title">Booking Summary</div>
+            <div class="summary-row">
+              <div class="summary-label">Room</div>
+              <div class="summary-value" id="cancel-room-number"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Guest</div>
+              <div class="summary-value" id="cancel-guest-name"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Check-in Date</div>
+              <div class="summary-value" id="cancel-check-in"></div>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 1.5rem">
+            <label class="form-label" for="cancel-refund-amount"
+              >Refund Amount (₹)</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="cancel-refund-amount"
+              placeholder="Enter refund amount"
+              min="0"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Refund Method</label>
+            <div class="payment-options">
+              <button
+                type="button"
+                class="payment-btn cash active"
+                data-payment="cash"
+              >
+                <i class="fas fa-money-bill"></i> Cash
+              </button>
+              <button
+                type="button"
+                class="payment-btn online"
+                data-payment="online"
+              >
+                <i class="fas fa-mobile-alt"></i> Online
+              </button>
+            </div>
+            <input type="hidden" id="cancel-refund-method" value="cash" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="cancel-reason"
+              >Cancellation Reason</label
+            >
+            <textarea
+              class="form-control"
+              id="cancel-reason"
+              placeholder="Enter reason for cancellation"
+              rows="3"
+            ></textarea>
+          </div>
+
+          <button type="submit" class="action-btn btn-danger">
+            Confirm Cancellation
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Payment Modal -->
+    <div class="modal-backdrop" id="add-payment-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Add Payment</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <form id="add-payment-form">
+          <input type="hidden" id="payment-booking-id" />
+
+          <div class="summary-card">
+            <div class="summary-title">Booking Summary</div>
+            <div class="summary-row">
+              <div class="summary-label">Room</div>
+              <div class="summary-value" id="payment-room-number"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Guest</div>
+              <div class="summary-value" id="payment-guest-name"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Total Amount</div>
+              <div class="summary-value" id="payment-total-amount"></div>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">Paid Amount</div>
+              <div class="summary-value" id="payment-paid-amount"></div>
+            </div>
+            <div class="summary-row total-row">
+              <div class="summary-label">Remaining Balance</div>
+              <div class="summary-value" id="payment-balance"></div>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 1.5rem">
+            <label class="form-label" for="payment-amount"
+              >Payment Amount (₹)</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="payment-amount"
+              placeholder="Enter payment amount"
+              min="1"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Payment Method</label>
+            <div class="payment-options">
+              <button
+                type="button"
+                class="payment-btn cash active"
+                data-payment="cash"
+              >
+                <i class="fas fa-money-bill"></i> Cash
+              </button>
+              <button
+                type="button"
+                class="payment-btn online"
+                data-payment="online"
+              >
+                <i class="fas fa-mobile-alt"></i> Online
+              </button>
+            </div>
+            <input type="hidden" id="payment-method" value="cash" />
+          </div>
+
+          <button type="submit" class="action-btn btn-primary">
+            Add Payment
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Update Booking Modal -->
+    <div class="modal-backdrop" id="update-booking-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Update Booking</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <form id="update-booking-form">
+          <input type="hidden" id="update-booking-id" />
+
+          <div class="form-group">
+            <label class="form-label" for="update-guest-name">Guest Name</label>
+            <input
+              type="text"
+              class="form-control"
+              id="update-guest-name"
+              placeholder="Full name"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-guest-mobile"
+              >Mobile Number</label
+            >
+            <input
+              type="tel"
+              class="form-control"
+              id="update-guest-mobile"
+              placeholder="10-digit mobile number"
+              required
+              pattern="[0-9]{10}"
+              title="Please enter a valid 10-digit mobile number"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-check-in"
+              >Check-in Date</label
+            >
+            <input
+              type="date"
+              class="form-control"
+              id="update-check-in"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-check-out"
+              >Check-out Date</label
+            >
+            <input
+              type="date"
+              class="form-control"
+              id="update-check-out"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-room">Room</label>
+            <select class="form-control" id="update-room" required>
+              <option value="">Loading available rooms...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-guest-count"
+              >Number of Guests</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="update-guest-count"
+              placeholder="Number of guests"
+              min="1"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-total-amount"
+              >Total Amount (₹)</label
+            >
+            <input
+              type="number"
+              class="form-control"
+              id="update-total-amount"
+              placeholder="Enter total amount"
+              required
+              min="1"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="update-notes"
+              >Notes (Optional)</label
+            >
+            <textarea
+              class="form-control"
+              id="update-notes"
+              placeholder="Add any special requests or notes"
+              rows="3"
+            ></textarea>
+          </div>
+
+          <button type="submit" class="action-btn btn-primary">
+            Update Booking
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/script.js"></script>
+    <script src="/static/shift.js"></script>
+    <script src="/static/analytics.js"></script>
+    <script src="/static/expense.js"></script>
+    <script src="/static/booking.js"></script>
+    <script src="/static/history.js"></script>
+  </body>
+</html>
