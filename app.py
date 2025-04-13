@@ -1,4 +1,3 @@
-# ----- IMPORTS -----
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from datetime import datetime, timedelta
 import json
@@ -6,25 +5,48 @@ import os
 import logging
 import uuid
 from werkzeug.utils import secure_filename
-
-# Google API imports
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-
-# ----- APP SETUP -----
-# Load credentials from environment variable
-google_credentials = os.environ.get('GOOGLE_CREDENTIALS')
-credentials_info = json.loads(google_credentials)
-credentials = service_account.Credentials.from_service_account_info(
-    credentials_info, scopes=SCOPES)
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler("lodge.log"), logging.StreamHandler()]
+    handlers=[logging.StreamHandler()]  # Only log to console on Render
 )
+logger = logging.getLogger(__name__)
+
+# Initialize Flask app
+app = Flask(__name__, static_folder='static')
+
+# Google API settings - DEFINE SCOPES BEFORE USING THEM
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+SPREADSHEET_ID = 'your-spreadsheet-id'  # Replace with yours
+DRIVE_FOLDER_ID = 'your-folder-id'  # Replace with yours
+
+# Try to get credentials from environment variable
+try:
+    google_credentials = os.environ.get('GOOGLE_CREDENTIALS')
+    if google_credentials:
+        logger.info("Using Google credentials from environment variable")
+        credentials_info = json.loads(google_credentials)
+        credentials = service_account.Credentials.from_service_account_info(
+            credentials_info, scopes=SCOPES)
+    else:
+        # Fall back to file if environment variable is not set
+        logger.info("Environment variable GOOGLE_CREDENTIALS not found, trying file")
+        SERVICE_ACCOUNT_FILE = 'lodge-service-account.json'
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            credentials = service_account.Credentials.from_service_account_file(
+                SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        else:
+            logger.error(f"Service account file {SERVICE_ACCOUNT_FILE} not found")
+            credentials = None
+except Exception as e:
+    logger.error(f"Error loading Google credentials: {str(e)}")
+    credentials = None
+    
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='static')
