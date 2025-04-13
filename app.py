@@ -372,36 +372,127 @@ def uploaded_file(filename):
     """Serve uploaded files"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+# Updated photo upload function with better error handling and debugging
+
 @app.route("/upload_photo", methods=["POST"])
 def upload_photo():
-    """Handle photo uploads and store in Google Drive"""
+    """Handle photo uploads and store in Google Drive with enhanced error handling"""
+    logger.info("Processing photo upload request")
+    
     if 'photo' not in request.files:
+        logger.warning("No file part in the request")
         return jsonify(success=False, message="No file part")
     
     file = request.files['photo']
     
     if file.filename == '':
+        logger.warning("No selected file")
         return jsonify(success=False, message="No selected file")
     
     if file:
-        # Save file locally first
-        filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{file.filename}")
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
+        try:
+            # Create uploads directory if it doesn't exist
+            if not os.path.exists(app.config['UPLOAD_FOLDER']):
+                logger.info(f"Creating uploads directory: {app.config['UPLOAD_FOLDER']}")
+                os.makedirs(app.config['UPLOAD_FOLDER'])
+            
+            # Save file locally first
+            filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{file.filename}")
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            
+            logger.info(f"Saving uploaded file temporarily to {file_path}")
+            file.save(file_path)
+            
+            # Check if file was saved successfully
+            if not os.path.exists(file_path):
+                logger.error(f"Failed to save file to {file_path}")
+                return jsonify(success=False, message="Failed to save uploaded file")
+            
+            logger.info(f"File saved successfully, size: {os.path.getsize(file_path)} bytes")
+            
+            # Upload to Google Drive
+            logger.info(f"Uploading file to Google Drive: {filename}")
+            drive_link = upload_to_drive(file_path, filename)
+            
+            if drive_link:
+                logger.info(f"Upload to Google Drive successful: {drive_link}")
+                # Remove local file after upload
+                try:
+                    os.remove(file_path)
+                    logger.info(f"Removed temporary file: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary file {file_path}: {str(e)}")
+                
+                return jsonify(success=True, filename=filename, path=drive_link)
+            else:
+                logger.error("Upload to Google Drive failed")
+                return jsonify(success=False, message="Upload to Google Drive failed")
         
-        # Upload to Google Drive
-        drive_link = upload_to_drive(file_path, filename)
-        
-        # Remove local file after upload
-        os.remove(file_path)
-        
-        if drive_link:
-            return jsonify(success=True, filename=filename, path=drive_link)
-        else:
-            return jsonify(success=False, message="Upload to Google Drive failed")
+        except Exception as e:
+            logger.error(f"Error processing photo upload: {str(e)}")
+            return jsonify(success=False, message=f"Error processing photo: {str(e)}")
     
     return jsonify(success=False, message="Upload failed")
 
+def upload_to_drive(file_path, file_name):
+    """Upload a file to Google Drive with enhanced error handling and debugging"""
+    logger.info(f"Starting upload to Drive: {file_name}")
+    
+    try:
+        # Get Google Drive service
+        _, drive_service = get_google_services()
+        
+        if not drive_service:
+            logger.error("Failed to initialize Google Drive service")
+            return None
+            
+        # Verify Drive folder exists
+        try:
+            folder = drive_service.files().get(fileId=DRIVE_FOLDER_ID).execute()
+            logger.info(f"Target Drive folder verified: {folder.get('name', 'unknown')}")
+        except Exception as e:
+            logger.error(f"Error verifying Drive folder {DRIVE_FOLDER_ID}: {str(e)}")
+            return None
+        
+        # Prepare file metadata
+        file_metadata = {
+            'name': file_name,
+            'parents': [DRIVE_FOLDER_ID]
+        }
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return None
+            
+        logger.info(f"Uploading file {file_path} to Drive folder {DRIVE_FOLDER_ID}")
+        
+        # Upload the file
+        media = MediaFileUpload(file_path, resumable=True)
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id,webContentLink').execute()
+        
+        # Make the file publicly accessible
+        permission = {
+            'type': 'anyone',
+            'role': 'reader'
+        }
+        
+        logger.info(f"Setting public permission for file ID: {file.get('id')}")
+        drive_service.permissions().create(
+            fileId=file.get('id'),
+            body=permission).execute()
+        
+        # Return the public link
+        logger.info(f"Upload successful, webContentLink: {file.get('webContentLink')}")
+        return file.get('webContentLink')
+    
+    except Exception as e:
+        logger.error(f"Error uploading to Google Drive: {str(e)}")
+        return None
+    
 @app.route("/checkin", methods=["POST"])
 def checkin():
     """Handle guest check-in"""
@@ -822,9 +913,748 @@ def get_room_numbers():
         logger.error(f"Error retrieving room numbers: {str(e)}")
         return jsonify(success=False, message=f"Error retrieving room numbers: {str(e)}")
 
-# Include other routes (add_room, apply_discount, transfer_room, etc.)
-# The implementation follows the same pattern as the routes above
+@app.route("/add_room", methods=["POST"])
+def add_room():
+    try:
+        data_json = request.json
+        room_number = data_json.get("roomNumber")
+        
+        if not room_number:
+            return jsonify(success=False, message="Room number is required")
+            
+        if room_number in rooms:
+            return jsonify(success=False, message=f"Room {room_number} already exists")
+            
+        # Add the new room
+        rooms[room_number] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
+        
+        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
+        logger.info(f"New room {room_number} added")
+        return jsonify(success=True, message=f"Room {room_number} added successfully")
+        
+    except Exception as e:
+        logger.error(f"Error adding new room: {str(e)}")
+        return jsonify(success=False, message=f"Error adding new room: {str(e)}")
 
-# ----- START THE APP -----
+
+@app.route("/apply_discount", methods=["POST"])
+def apply_discount():
+    try:
+        data_json = request.json
+        room = data_json["room"]
+        amount = int(data_json.get("amount", 0))
+        reason = data_json.get("reason", "Discount")
+        
+        if room not in rooms:
+            return jsonify(success=False, message="Room not found.")
+            
+        if rooms[room]["status"] != "occupied":
+            return jsonify(success=False, message="Room is not occupied.")
+        
+        if amount <= 0:
+            return jsonify(success=False, message="Please provide a valid discount amount.")
+        
+        # Create discount entry
+        discount_entry = {
+            "amount": amount,
+            "reason": reason,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "time": datetime.now().strftime("%H:%M")
+        }
+        
+        # Initialize discounts array if it doesn't exist
+        if "discounts" not in rooms[room]:
+            rooms[room]["discounts"] = []
+        
+        # Add discount to room
+        rooms[room]["discounts"].append(discount_entry)
+        
+        # Adjust balance
+        if rooms[room]["balance"] > 0:
+            # Only reduce balance if there is an outstanding amount
+            rooms[room]["balance"] = max(0, rooms[room]["balance"] - amount)
+            
+            # Adjust totals
+            if "balance" in totals:
+                totals["balance"] = max(0, totals["balance"] - amount)
+        else:
+            # If balance is already paid or negative (refund due), 
+            # create a negative balance (additional refund)
+            rooms[room]["balance"] -= amount
+        
+        # Log the discount
+        if "discounts" not in logs:
+            logs["discounts"] = []
+            
+        logs["discounts"].append({
+            "room": room,
+            "name": rooms[room]["guest"]["name"],
+            "amount": amount,
+            "reason": reason,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "time": datetime.now().strftime("%H:%M")
+        })
+        
+        # Save data
+        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
+        logger.info(f"Discount of ₹{amount} applied to room {room}, reason: {reason}")
+        
+        return jsonify(success=True, message=f"Discount of ₹{amount} applied successfully.")
+    except Exception as e:
+        logger.error(f"Error applying discount: {str(e)}")
+        return jsonify(success=False, message=f"Error applying discount: {str(e)}")
+    
+@app.route("/transfer_room", methods=["POST"])
+def transfer_room():
+    try:
+        data_json = request.json
+        old_room = str(data_json["old_room"])  # Convert to string
+        new_room = str(data_json["new_room"])  # Convert to string
+        
+        # Check if both rooms exist and conditions are met
+        if old_room not in rooms or new_room not in rooms:
+            return jsonify(success=False, message="One or both rooms do not exist.")
+            
+        if rooms[old_room]["status"] != "occupied":
+            return jsonify(success=False, message="Source room is not occupied.")
+            
+        if rooms[new_room]["status"] != "vacant":
+            return jsonify(success=False, message="Destination room is not vacant.")
+        
+        # Store guest name before transfer
+        guest_name = rooms[old_room]["guest"]["name"]
+        
+        # Transfer guest data
+        rooms[new_room] = rooms[old_room].copy()
+        
+        # Clear old room
+        rooms[old_room] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
+        
+        # Update log entries to point to the new room
+        for log_type in ["cash", "online", "balance", "add_ons", "refunds", "renewals"]:
+            if log_type in logs:
+                for log in logs[log_type]:
+                    if log["room"] == old_room and log["name"] == guest_name:
+                        log["room"] = new_room
+                        log["room_shifted"] = True
+                        log["old_room"] = old_room
+        
+        # Record the room shift event
+        shift_log = {
+            "room": new_room,
+            "name": guest_name,
+            "old_room": old_room,
+            "time": datetime.now().strftime("%H:%M"),
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "note": f"Transferred from Room {old_room} to Room {new_room}"
+        }
+        
+        # Create a room_shifts log if it doesn't exist
+        if "room_shifts" not in logs:
+            logs["room_shifts"] = []
+            
+        logs["room_shifts"].append(shift_log)
+        
+        # Save the updated data
+        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
+        
+        return jsonify(
+            success=True, 
+            message=f"Guest transferred from Room {old_room} to Room {new_room} successfully."
+        )
+        
+    except Exception as e:
+        logger.error(f"Error transferring room: {str(e)}", exc_info=True)
+        return jsonify(success=False, message=f"Error transferring room: {str(e)}")
+
+# Add these endpoints to app.py
+
+@app.route("/add_expense", methods=["POST"])
+def add_expense():
+    try:
+        data_json = request.json
+        date = data_json.get("date")
+        category = data_json.get("category")
+        description = data_json.get("description")
+        amount = int(data_json.get("amount", 0))
+        payment_method = data_json.get("payment_method", "cash")
+        expense_type = data_json.get("type", "transaction")  # "transaction" or "report"
+        
+        if not date or not category or not description or amount <= 0 or not payment_method:
+            return jsonify(success=False, message="All fields are required")
+        
+        # Ensure expenses log exists
+        if "expenses" not in logs:
+            logs["expenses"] = []
+        
+        # Create expense entry
+        expense_entry = {
+            "date": date,
+            "category": category,
+            "description": description,
+            "amount": amount,
+            "payment_method": payment_method,
+            "expense_type": expense_type,
+            "time": datetime.now().strftime("%H:%M")
+        }
+        
+        # Add to expenses log
+        logs["expenses"].append(expense_entry)
+        
+        # Only transaction expenses affect daily totals
+        if expense_type == "transaction":
+            # Ensure expenses total exists
+            if "expenses" not in totals:
+                totals["expenses"] = 0
+                
+            # Update total expenses
+            totals["expenses"] += amount
+        
+        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
+        
+        # Log the expense
+        logger.info(f"Expense added: {description}, Category: {category}, Amount: ₹{amount}, Type: {expense_type}")
+        
+        return jsonify(success=True, message=f"Expense of ₹{amount} added successfully")
+    except Exception as e:
+        logger.error(f"Error adding expense: {str(e)}")
+        return jsonify(success=False, message=f"Error adding expense: {str(e)}")
+
+# Update the reports endpoint to include expenses
+@app.route("/reports", methods=["POST"])
+def get_reports():
+    try:
+        data_json = request.json
+        start_date = data_json.get("start_date")
+        end_date = data_json.get("end_date")
+        
+        if not start_date or not end_date:
+            return jsonify(success=False, message="Start and end dates are required.")
+        
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)  # Include end date
+        
+        # Filter logs by date range
+        cash_logs = [log for log in logs["cash"] if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        online_logs = [log for log in logs["online"] if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        add_on_logs = [log for log in logs["add_ons"] if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        refund_logs = [log for log in logs.get("refunds", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        renewal_logs = [log for log in logs.get("renewals", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        
+        # Filter expense logs
+        expense_logs = logs.get("expenses", [])
+        filtered_expense_logs = [log for log in expense_logs if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        
+        # Calculate summaries
+        cash_total = sum(log["amount"] for log in cash_logs)
+        online_total = sum(log["amount"] for log in online_logs)
+        addon_total = sum(log["price"] for log in add_on_logs)
+        refund_total = sum(log["amount"] for log in refund_logs)
+        
+        # Calculate expense totals
+        transaction_expense_total = sum(log["amount"] for log in filtered_expense_logs if log.get("expense_type") == "transaction")
+        report_expense_total = sum(log["amount"] for log in filtered_expense_logs if log.get("expense_type") == "report")
+        total_expense = transaction_expense_total + report_expense_total
+        
+        # Count check-ins during this period
+        checkins = 0
+        renewals = len(renewal_logs)
+        
+        # Proper way to count check-ins from existing rooms
+        for room_info in rooms.values():
+            if room_info["checkin_time"]:
+                try:
+                    checkin_date = datetime.strptime(room_info["checkin_time"].split(" ")[0], "%Y-%m-%d")
+                    if start <= checkin_date < end:
+                        checkins += 1
+                except Exception as e:
+                    logger.error(f"Error parsing checkin date: {str(e)}")
+        
+        return jsonify(
+            success=True,
+            cash_total=cash_total,
+            online_total=online_total,
+            addon_total=addon_total,
+            refund_total=refund_total,
+            expense_total=total_expense,
+            transaction_expense_total=transaction_expense_total,
+            report_expense_total=report_expense_total,
+            total_revenue=cash_total + online_total - refund_total - transaction_expense_total,
+            checkins=checkins,
+            renewals=renewals,
+            cash_logs=cash_logs,
+            online_logs=online_logs,
+            addon_logs=add_on_logs,
+            refund_logs=refund_logs,
+            renewal_logs=renewal_logs,
+            expense_logs=filtered_expense_logs
+        )
+    
+    except Exception as e:
+        logger.error(f"Error generating report: {str(e)}")
+        return jsonify(success=False, message=f"Error generating report: {str(e)}")
+    
+# Get all future bookings
+@app.route("/get_bookings", methods=["GET"])
+def get_bookings():
+    try:
+        # Load bookings from data
+        bookings = data.get("bookings", {})
+        
+        # Convert to list for easier frontend handling
+        bookings_list = []
+        for booking_id, booking in bookings.items():
+            booking_copy = booking.copy()
+            booking_copy["booking_id"] = booking_id
+            bookings_list.append(booking_copy)
+        
+        # Sort by check-in date (most recent first)
+        bookings_list.sort(key=lambda b: b.get("check_in_date", ""), reverse=True)
+        
+        return jsonify(success=True, bookings=bookings_list)
+    except Exception as e:
+        logger.error(f"Error getting bookings: {str(e)}")
+        return jsonify(success=False, message=f"Error getting bookings: {str(e)}")
+
+# Create a new booking
+@app.route("/create_booking", methods=["POST"])
+def create_booking():
+    try:
+        booking_data = request.json
+        
+        # Validate required fields
+        required_fields = ["room", "guest_name", "guest_mobile", "check_in_date", "check_out_date", "total_amount"]
+        for field in required_fields:
+            if field not in booking_data:
+                return jsonify(success=False, message=f"Missing required field: {field}")
+        
+        # Generate a unique booking ID
+        booking_id = str(uuid.uuid4())
+        
+        # Initialize booking structure
+        booking = {
+            "room": booking_data["room"],
+            "guest_name": booking_data["guest_name"],
+            "guest_mobile": booking_data["guest_mobile"],
+            "booking_date": datetime.now().strftime("%Y-%m-%d"),
+            "check_in_date": booking_data["check_in_date"],
+            "check_out_date": booking_data["check_out_date"],
+            "status": "confirmed",
+            "total_amount": int(booking_data["total_amount"]),
+            "paid_amount": int(booking_data.get("paid_amount", 0)),
+            "balance": int(booking_data["total_amount"]) - int(booking_data.get("paid_amount", 0)),
+            "payment_method": booking_data.get("payment_method", "cash"),
+            "notes": booking_data.get("notes", ""),
+            "photo_path": booking_data.get("photo_path", None),
+            "guest_count": int(booking_data.get("guest_count", 1))
+        }
+        
+        # Handle partial payment logging if amount is paid
+        paid_amount = int(booking_data.get("paid_amount", 0))
+        if paid_amount > 0:
+            payment_method = booking_data.get("payment_method", "cash")
+            
+            # Add to payment logs
+            logs[payment_method].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": paid_amount,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "type": "booking_advance"
+            })
+            
+            # Add to booking payments log specifically
+            logs["booking_payments"].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": paid_amount,
+                "payment_method": payment_method,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "type": "advance"
+            })
+            
+            # Update totals
+            totals[payment_method] += paid_amount
+            totals["advance_bookings"] += paid_amount
+        
+        # Add booking to data structure
+        if "bookings" not in data:
+            data["bookings"] = {}
+        
+        data["bookings"][booking_id] = booking
+        
+        # Save data
+        save_data(data)
+        
+        logger.info(f"Booking created: {booking_id} for {booking['guest_name']}")
+        return jsonify(success=True, booking_id=booking_id, message="Booking created successfully")
+        
+    except Exception as e:
+        logger.error(f"Error creating booking: {str(e)}")
+        return jsonify(success=False, message=f"Error creating booking: {str(e)}")
+
+# Update an existing booking
+@app.route("/update_booking", methods=["POST"])
+def update_booking():
+    try:
+        booking_data = request.json
+        booking_id = booking_data.get("booking_id")
+        
+        if not booking_id or booking_id not in data.get("bookings", {}):
+            return jsonify(success=False, message="Invalid booking ID")
+        
+        # Get the existing booking
+        booking = data["bookings"][booking_id]
+        
+        # Check if there's a new payment to process
+        new_payment_amount = int(booking_data.get("new_payment", 0))
+        if new_payment_amount > 0:
+            payment_method = booking_data.get("payment_method", "cash")
+            
+            # Add to payment logs
+            logs[payment_method].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": new_payment_amount,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "type": "booking_payment"
+            })
+            
+            # Add to booking payments log specifically
+            logs["booking_payments"].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": new_payment_amount,
+                "payment_method": payment_method,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "type": "additional_payment"
+            })
+            
+            # Update totals
+            totals[payment_method] += new_payment_amount
+            totals["advance_bookings"] += new_payment_amount
+            
+            # Update booking paid amount and balance
+            booking["paid_amount"] += new_payment_amount
+            booking["balance"] = booking["total_amount"] - booking["paid_amount"]
+        
+        # Update fields that can be modified
+        updatable_fields = [
+            "guest_name", "guest_mobile", "check_in_date", "check_out_date", 
+            "room", "notes", "guest_count", "total_amount"
+        ]
+        
+        for field in updatable_fields:
+            if field in booking_data:
+                booking[field] = booking_data[field]
+        
+        # Recalculate balance if total amount was updated
+        if "total_amount" in booking_data:
+            booking["total_amount"] = int(booking_data["total_amount"])
+            booking["balance"] = booking["total_amount"] - booking["paid_amount"]
+            
+        # Update status if provided
+        if "status" in booking_data:
+            booking["status"] = booking_data["status"]
+        
+        # Save data
+        save_data(data)
+        
+        logger.info(f"Booking updated: {booking_id}")
+        return jsonify(success=True, booking=booking, message="Booking updated successfully")
+        
+    except Exception as e:
+        logger.error(f"Error updating booking: {str(e)}")
+        return jsonify(success=False, message=f"Error updating booking: {str(e)}")
+
+# Cancel a booking
+@app.route("/cancel_booking", methods=["POST"])
+def cancel_booking():
+    try:
+        booking_data = request.json
+        booking_id = booking_data.get("booking_id")
+        
+        if not booking_id or booking_id not in data.get("bookings", {}):
+            return jsonify(success=False, message="Invalid booking ID")
+        
+        # Get the booking
+        booking = data["bookings"][booking_id]
+        
+        # Process refund if requested
+        refund_amount = int(booking_data.get("refund_amount", 0))
+        if refund_amount > 0:
+            refund_method = booking_data.get("refund_method", "cash")
+            
+            # Log the refund
+            logs["refunds"].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": refund_amount,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "payment_mode": refund_method,
+                "note": "Booking cancellation refund"
+            })
+            
+            # Update total refunds
+            totals["refunds"] += refund_amount
+            
+            # Update booking paid amount and balance
+            booking["paid_amount"] -= refund_amount
+            booking["balance"] = booking["total_amount"] - booking["paid_amount"]
+        
+        # Update booking status
+        booking["status"] = "cancelled"
+        booking["cancellation_date"] = datetime.now().strftime("%Y-%m-%d")
+        booking["cancellation_reason"] = booking_data.get("reason", "")
+        
+        # Save data
+        save_data(data)
+        
+        logger.info(f"Booking cancelled: {booking_id}")
+        return jsonify(success=True, message="Booking cancelled successfully")
+        
+    except Exception as e:
+        logger.error(f"Error cancelling booking: {str(e)}")
+        return jsonify(success=False, message=f"Error cancelling booking: {str(e)}")
+
+# Convert a booking to check-in
+@app.route("/convert_booking_to_checkin", methods=["POST"])
+def convert_booking_to_checkin():
+    try:
+        booking_data = request.json
+        booking_id = booking_data.get("booking_id")
+        
+        if not booking_id or booking_id not in data.get("bookings", {}):
+            return jsonify(success=False, message="Invalid booking ID")
+        
+        # Get the booking
+        booking = data["bookings"][booking_id]
+        
+        # Check if the room is currently vacant
+        room_number = booking["room"]
+        if room_number not in rooms or rooms[room_number]["status"] != "vacant":
+            return jsonify(success=False, message=f"Room {room_number} is not vacant")
+        
+        # Process remaining payment if provided
+        remaining_payment = int(booking_data.get("remaining_payment", 0))
+        payment_method = booking_data.get("payment_method", "cash")
+        balance_after_payment = booking["balance"] - remaining_payment
+        
+        if remaining_payment > 0:
+            # Add payment to logs
+            logs[payment_method].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": remaining_payment,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "type": "booking_final_payment"
+            })
+            
+            # Add to booking payments log
+            logs["booking_payments"].append({
+                "booking_id": booking_id,
+                "room": booking["room"],
+                "name": booking["guest_name"],
+                "amount": remaining_payment,
+                "payment_method": payment_method,
+                "time": datetime.now().strftime("%H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "type": "final_payment"
+            })
+            
+            # Update totals
+            totals[payment_method] += remaining_payment
+        
+        # Create guest object for check-in
+        guest = {
+            "name": booking["guest_name"],
+            "mobile": booking["guest_mobile"],
+            "price": int(booking_data.get("room_price", booking["total_amount"])),
+            "guests": booking["guest_count"],
+            "payment": payment_method,
+            "balance": balance_after_payment if balance_after_payment > 0 else 0,
+            "photo": booking.get("photo_path")
+        }
+        
+        # Update room to occupied
+        rooms[room_number]["status"] = "occupied"
+        rooms[room_number]["guest"] = guest
+        rooms[room_number]["checkin_time"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rooms[room_number]["balance"] = balance_after_payment if balance_after_payment > 0 else 0
+        rooms[room_number]["add_ons"] = []
+        rooms[room_number]["renewal_count"] = 0
+        rooms[room_number]["last_renewal_time"] = None
+        
+        # If there's still balance, add to balance log
+        if balance_after_payment > 0:
+            logs["balance"].append({
+                "room": room_number,
+                "name": guest["name"],
+                "amount": balance_after_payment,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "note": "Remaining balance from booking"
+            })
+            totals["balance"] += balance_after_payment
+        
+        # Update booking status
+        booking["status"] = "checked_in"
+        booking["check_in_time"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        # Save data
+        save_data(data)
+        
+        logger.info(f"Booking {booking_id} converted to check-in for room {room_number}")
+        return jsonify(success=True, message=f"Guest checked in to Room {room_number}")
+        
+    except Exception as e:
+        logger.error(f"Error converting booking to check-in: {str(e)}")
+        return jsonify(success=False, message=f"Error converting booking to check-in: {str(e)}")
+
+@app.route("/check_availability", methods=["POST"])
+def check_availability():
+    try:
+        request_data = request.json
+        check_in_date = request_data.get("check_in_date")
+        check_out_date = request_data.get("check_out_date")
+        
+        if not check_in_date or not check_out_date:
+            return jsonify(success=False, message="Check-in and check-out dates are required")
+        
+        # Parse dates
+        try:
+            check_in = datetime.strptime(check_in_date, "%Y-%m-%d")
+            check_out = datetime.strptime(check_out_date, "%Y-%m-%d")
+        except ValueError:
+            return jsonify(success=False, message="Invalid date format. Use YYYY-MM-DD")
+        
+        # Get all bookings that overlap with the requested date range
+        bookings = data.get("bookings", {})
+        booked_rooms = set()
+        
+        for booking_id, booking in bookings.items():
+            # Skip cancelled bookings
+            if booking.get("status") == "cancelled":
+                continue
+                
+            # Skip checked-in bookings
+            if booking.get("status") == "checked_in":
+                continue
+                
+            # Parse booking dates
+            booking_check_in = datetime.strptime(booking["check_in_date"], "%Y-%m-%d")
+            booking_check_out = datetime.strptime(booking["check_out_date"], "%Y-%m-%d")
+            
+            # Check if there's any overlap in the date ranges
+            if (check_in < booking_check_out and check_out > booking_check_in):
+                booked_rooms.add(booking["room"])
+        
+        # For current occupancy, ONLY exclude rooms if check-in date is TODAY
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        if check_in.date() == today.date():
+            # Only check currently occupied rooms if check-in is today
+            for room_number, room_info in rooms.items():
+                if room_info["status"] == "occupied":
+                    booked_rooms.add(room_number)
+        
+        # Compile available rooms (all rooms except those already booked for the requested dates)
+        available_rooms = []
+        for room_number in rooms.keys():
+            if room_number not in booked_rooms:
+                available_rooms.append(room_number)
+        
+        # Sort room numbers
+        available_rooms.sort(key=lambda r: (int(r) if r.isdigit() else float('inf'), r))
+        
+        return jsonify(success=True, available_rooms=available_rooms)
+        
+    except Exception as e:
+        logger.error(f"Error checking availability: {str(e)}")
+        return jsonify(success=False, message=f"Error checking availability: {str(e)}")
+    
+# Add this to app.py - Enhanced Google API Authentication
+
+# Improved Google credentials handling
+def setup_google_credentials():
+    """Initialize and validate Google API credentials with enhanced error logging"""
+    logger.info("Setting up Google API credentials...")
+    
+    try:
+        # Try environment variable first
+        google_credentials = os.environ.get('GOOGLE_CREDENTIALS')
+        if google_credentials:
+            logger.info("Using Google credentials from environment variable")
+            try:
+                credentials_info = json.loads(google_credentials)
+                credentials = service_account.Credentials.from_service_account_info(
+                    credentials_info, scopes=SCOPES)
+                logger.info("Successfully loaded credentials from environment variable")
+                return credentials
+            except json.JSONDecodeError:
+                logger.error("Failed to parse GOOGLE_CREDENTIALS environment variable: Invalid JSON")
+            except Exception as e:
+                logger.error(f"Error creating credentials from environment variable: {str(e)}")
+        
+        # Fall back to file
+        logger.info("Trying to load credentials from service account file")
+        SERVICE_ACCOUNT_FILE = 'lodge-service-account.json'
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            try:
+                credentials = service_account.Credentials.from_service_account_file(
+                    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+                logger.info(f"Successfully loaded credentials from {SERVICE_ACCOUNT_FILE}")
+                return credentials
+            except Exception as e:
+                logger.error(f"Error loading credentials from file: {str(e)}")
+        else:
+            logger.error(f"Service account file {SERVICE_ACCOUNT_FILE} not found")
+        
+        logger.critical("No valid Google credentials found. API functionality will be disabled.")
+        return None
+    except Exception as e:
+        logger.critical(f"Unexpected error setting up Google credentials: {str(e)}")
+        return None
+
+# Use this to get services with proper error handling
+def get_google_services():
+    """Initialize and return Google Sheets and Drive services with better error handling"""
+    try:
+        credentials = setup_google_credentials()
+        if not credentials:
+            logger.error("Failed to obtain valid credentials")
+            return None, None
+        
+        logger.info("Initializing Google API services...")
+        try:
+            sheets_service = build('sheets', 'v4', credentials=credentials)
+            logger.info("Successfully initialized Google Sheets service")
+        except Exception as e:
+            logger.error(f"Failed to build Sheets service: {str(e)}")
+            sheets_service = None
+            
+        try:
+            drive_service = build('drive', 'v3', credentials=credentials)
+            logger.info("Successfully initialized Google Drive service")
+        except Exception as e:
+            logger.error(f"Failed to build Drive service: {str(e)}")
+            drive_service = None
+            
+        return sheets_service, drive_service
+    except Exception as e:
+        logger.error(f"Error connecting to Google services: {str(e)}")
+        return None, None
+
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5000)
