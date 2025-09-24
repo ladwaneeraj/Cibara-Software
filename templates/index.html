@@ -10,12 +10,13 @@
     />
     <link rel="stylesheet" href="/static/style.css" />
     <link rel="stylesheet" href="/static/booking.css" />
+    <link rel="stylesheet" href="/static/settle-later.css" />
   </head>
   <body>
     <div class="app-container">
       <!-- Header -->
       <header class="header">
-        <h1>Lodge Manager</h1>
+        <h1>CIBARA</h1>
         <div class="header-actions">
           <button
             id="refresh-btn"
@@ -30,9 +31,7 @@
             class="action-btn"
             style="background: transparent; color: white; padding: 0.5rem"
             aria-label="Settings"
-          >
-            <i class="fas fa-cog"></i>
-          </button>
+          ></button>
         </div>
       </header>
 
@@ -40,83 +39,86 @@
       <main class="dashboard">
         <!-- Stats Row -->
         <!-- Updated Dashboard Stats with Cash/Online Split -->
-        <div class="stats-container">
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: var(--success)">
-              <i class="fas fa-door-open"></i>
+        <!-- Replace your current stats-container with this collapsible version -->
+
+        <div class="collapsible-section">
+          <button class="collapse-toggle" id="stats-toggle">
+            <i class="fas fa-chart-bar"></i> Dashboard Stats
+            <i class="fas fa-chevron-down toggle-icon"></i>
+          </button>
+          <div
+            class="collapsible-content stats-container hidden"
+            id="stats-container"
+          >
+            <!-- Your existing stat cards -->
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: var(--success)">
+                <i class="fas fa-door-open"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Vacant Rooms</h3>
+                <p id="vacant-count">0</p>
+              </div>
             </div>
-            <div class="stat-info">
-              <h3>Vacant Rooms</h3>
-              <p id="vacant-count">0</p>
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: var(--danger)">
+                <i class="fas fa-bed"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Occupied</h3>
+                <p id="occupied-count">0</p>
+              </div>
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: var(--danger)">
-              <i class="fas fa-bed"></i>
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: #27ae60">
+                <i class="fas fa-money-bill-wave"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Today's Cash</h3>
+                <p id="today-cash">₹0</p>
+              </div>
             </div>
-            <div class="stat-info">
-              <h3>Occupied</h3>
-              <p id="occupied-count">0</p>
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: #2980b9">
+                <i class="fas fa-mobile-alt"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Today's Online</h3>
+                <p id="today-online">₹0</p>
+              </div>
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: #27ae60">
-              <i class="fas fa-money-bill-wave"></i>
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: var(--primary)">
+                <i class="fas fa-chart-line"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Total Revenue</h3>
+                <p id="today-revenue">₹0</p>
+              </div>
             </div>
-            <div class="stat-info">
-              <h3>Today's Cash</h3>
-              <p id="today-cash">₹0</p>
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: var(--warning)">
+                <i class="fas fa-exclamation-circle"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Pending Balance</h3>
+                <p id="pending-balance">₹0</p>
+              </div>
             </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: #2980b9">
-              <i class="fas fa-mobile-alt"></i>
-            </div>
-            <div class="stat-info">
-              <h3>Today's Online</h3>
-              <p id="today-online">₹0</p>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: var(--primary)">
-              <i class="fas fa-chart-line"></i>
-            </div>
-            <div class="stat-info">
-              <h3>Total Revenue</h3>
-              <p id="today-revenue">₹0</p>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: var(--warning)">
-              <i class="fas fa-exclamation-circle"></i>
-            </div>
-            <div class="stat-info">
-              <h3>Pending Balance</h3>
-              <p id="pending-balance">₹0</p>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon" style="background-color: var(--danger)">
-              <i class="fas fa-money-bill-wave-alt"></i>
-            </div>
-            <div class="stat-info">
-              <h3>Daily Expenses</h3>
-              <p id="today-expense">₹0</p>
+            <div class="stat-card">
+              <div class="stat-icon" style="background-color: var(--danger)">
+                <i class="fas fa-money-bill-wave-alt"></i>
+              </div>
+              <div class="stat-info">
+                <h3>Daily Expenses</h3>
+                <p id="today-expense">₹0</p>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Rooms Tab Content -->
         <div class="tab-content active" id="rooms-tab">
-          <div class="section-title">
-            <h2>All Rooms</h2>
-            <div>
-              <button id="add-room-btn" class="action-btn btn-sm btn-primary">
-                <i class="fas fa-plus"></i> Add Room
-              </button>
-            </div>
-          </div>
-
           <!-- Search -->
           <div class="search-container">
             <i class="fas fa-search search-icon"></i>
@@ -449,7 +451,7 @@
       </nav>
     </div>
 
-    <!-- Check-in Modal with Room Dropdown -->
+    <!-- Minimalistic Check-in Modal -->
     <div class="modal-backdrop" id="checkin-modal">
       <div class="modal-content">
         <div class="modal-header">
@@ -462,130 +464,95 @@
           <button class="close-btn" aria-label="Close">&times;</button>
         </div>
         <form id="checkin-form">
-          <div class="form-group">
-            <label class="form-label" for="guest-name">Guest Name</label>
-            <input
-              type="text"
-              class="form-control"
-              id="guest-name"
-              placeholder="Full name"
-              required
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="guest-mobile">Mobile Number</label>
-            <input
-              type="tel"
-              class="form-control"
-              id="guest-mobile"
-              placeholder="10-digit mobile number"
-              required
-              pattern="[0-9]{10}"
-              title="Please enter a valid 10-digit mobile number"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="room-price">Room Price (₹)</label>
-            <input
-              type="number"
-              class="form-control"
-              id="room-price"
-              placeholder="Enter room price"
-              required
-              min="1"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="guest-count">Number of Guests</label>
-            <input
-              type="number"
-              class="form-control"
-              id="guest-count"
-              placeholder="Number of guests"
-              min="1"
-              required
-            />
+          <!-- Guest Details Section -->
+          <div class="form-section">
+            <div class="form-group">
+              <label class="form-label" for="guest-name">Guest Name</label>
+              <input
+                type="text"
+                class="form-control"
+                id="guest-name"
+                placeholder="Full name"
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="guest-mobile">Mobile Number</label>
+              <input
+                type="tel"
+                class="form-control"
+                id="guest-mobile"
+                placeholder="10-digit mobile number"
+                required
+                pattern="[0-9]{10}"
+                title="Please enter a valid 10-digit mobile number"
+              />
+            </div>
           </div>
 
-          <!-- Photo Upload and Camera Capture -->
-          <div class="form-group">
-            <label class="form-label">Guest Photo</label>
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem">
+          <!-- Room and Price Section -->
+          <div class="form-section">
+            <!-- Room info - only shows for specific categories -->
+            <div class="room-category-wrapper">
+              <div class="room-category-indicator" id="room-category">
+                <!-- Will be filled via JS: e.g., Premium, AC, Regular -->
+              </div>
+              <!-- AC Toggle for Premium AC rooms -->
+              <div id="ac-toggle-container" style="display: none">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="ac-toggle" checked />
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">AC</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group half-width">
+                <label class="form-label" for="guest-count"
+                  >No. of Guests</label
+                >
+                <input
+                  type="number"
+                  class="form-control"
+                  id="guest-count"
+                  placeholder="Guests"
+                  min="1"
+                  value="1"
+                  required
+                />
+              </div>
+              <div class="form-group half-width">
+                <label class="form-label" for="room-price"
+                  >Room Price (₹)</label
+                >
+                <input
+                  type="number"
+                  class="form-control"
+                  id="room-price"
+                  placeholder="Price"
+                  required
+                  min="1"
+                />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="amount-paid"
+                >Amount Paid (₹)</label
+              >
               <input
-                type="file"
-                id="guest-photo"
-                accept="image/*"
+                type="number"
                 class="form-control"
-                style="flex: 2"
+                id="amount-paid"
+                placeholder="Enter amount paid"
+                required
+                min="0"
               />
-              <button
-                type="button"
-                id="camera-btn"
-                class="action-btn"
-                style="
-                  flex: 1;
-                  background-color: var(--secondary);
-                  color: white;
-                "
-              >
-                <i class="fas fa-camera"></i> Camera
-              </button>
-            </div>
-            <div
-              id="photo-preview-container"
-              style="display: none; margin-top: 1rem"
-            >
-              <img
-                id="photo-preview"
-                style="max-width: 100%; max-height: 200px; border-radius: 8px"
-                alt="Guest photo preview"
-              />
-              <button
-                type="button"
-                id="retake-photo-btn"
-                class="action-btn btn-danger"
-                style="margin-top: 0.5rem; padding: 0.5rem"
-              >
-                Retake Photo
-              </button>
-            </div>
-            <div id="camera-container" style="display: none; margin-top: 1rem">
-              <video
-                id="camera-feed"
-                style="width: 100%; border-radius: 8px"
-                autoplay
-                playsinline
-              ></video>
-              <button
-                type="button"
-                id="capture-photo-btn"
-                class="action-btn btn-primary"
-                style="margin-top: 0.5rem; padding: 0.5rem"
-              >
-                <i class="fas fa-camera"></i> Capture
-              </button>
-              <button
-                type="button"
-                id="cancel-camera-btn"
-                class="action-btn btn-danger"
-                style="margin-top: 0.5rem; padding: 0.5rem"
-              >
-                Cancel
-              </button>
             </div>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="amount-paid">Amount Paid (₹)</label>
-            <input
-              type="number"
-              class="form-control"
-              id="amount-paid"
-              placeholder="Enter amount paid"
-              required
-              min="0"
-            />
-          </div>
-          <div class="form-group">
+
+          <!-- Payment Method Section -->
+          <div class="form-section">
             <label class="form-label">Payment Method</label>
             <div class="payment-options">
               <button
@@ -612,8 +579,9 @@
             </div>
             <input type="hidden" id="payment-method" value="cash" />
           </div>
-          <button type="submit" class="action-btn btn-primary">
-            Complete Check-in
+
+          <button type="submit" class="action-btn btn-primary submit-btn">
+            <i class="fas fa-check-circle"></i> Complete Check-in
           </button>
         </form>
       </div>
@@ -733,26 +701,44 @@
             </button>
           </div>
 
-          <!-- Service Form (appears when a service is selected) -->
           <div id="service-form" class="hidden">
-            <div class="form-group" style="margin-top: 1rem">
-              <label class="form-label" for="service-name">Service</label>
-              <input
-                type="text"
-                id="service-name"
-                class="form-control"
-                readonly
-              />
+            <div class="form-row" style="margin-top: 1rem">
+              <div class="form-group half-width">
+                <label class="form-label" for="service-name">Service</label>
+                <input
+                  type="text"
+                  id="service-name"
+                  class="form-control"
+                  readonly
+                />
+              </div>
+              <div class="form-group half-width">
+                <label class="form-label" for="service-price">Price (₹)</label>
+                <input
+                  type="number"
+                  id="service-price"
+                  class="form-control"
+                  min="1"
+                  required
+                />
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label" for="service-price">Price (₹)</label>
-              <input
-                type="number"
-                id="service-price"
-                class="form-control"
-                min="1"
-                required
-              />
+            <div class="form-row">
+              <div class="form-group half-width">
+                <label class="form-label" for="service-quantity">Qty</label>
+                <input
+                  type="number"
+                  id="service-quantity"
+                  class="form-control"
+                  min="1"
+                  value="1"
+                  required
+                />
+              </div>
+              <div class="form-group half-width">
+                <label class="form-label">Total</label>
+                <div class="form-value" id="service-total-price">₹0</div>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">Payment Method</label>
@@ -875,38 +861,6 @@
       </div>
     </div>
 
-    <!-- Room Details Modal -->
-    <div class="modal-backdrop" id="room-details-modal">
-      <div class="modal-content" style="max-width: 400px">
-        <div class="modal-header">
-          <h2>Room <span id="detail-room-number"></span> Details</h2>
-          <button class="close-btn" aria-label="Close">&times;</button>
-        </div>
-        <div id="room-details-content">
-          <!-- Content will be populated dynamically -->
-          <div class="loading-indicator">
-            <span class="loader"></span>
-          </div>
-        </div>
-        <div class="action-row" style="margin-top: 1rem">
-          <button
-            class="action-btn"
-            id="room-details-checkin-btn"
-            style="background-color: var(--vacant)"
-          >
-            Check In
-          </button>
-          <button
-            class="action-btn"
-            id="room-details-checkout-btn"
-            style="background-color: var(--occupied)"
-          >
-            Check Out
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- Add Room Modal -->
     <div class="modal-backdrop" id="add-room-modal">
       <div class="modal-content" style="max-width: 400px">
@@ -949,6 +903,12 @@
           <i class="fas fa-sync-alt"></i>
           <span>Renewals Due</span>
         </div>
+
+        <div class="quick-action-item" id="quick-settlements-btn">
+          <i class="fas fa-money-bill-wave"></i>
+          <span>Pending Payments</span>
+        </div>
+
         <!-- New Transfer Room button -->
         <div class="quick-action-item" id="quick-transfer-btn">
           <i class="fas fa-exchange-alt"></i>
@@ -977,6 +937,47 @@
           <p>
             <strong>Guest: <span id="confirm-checkout-guest"></span></strong>
           </p>
+
+          <!-- Add balance display and settle later option -->
+          <div
+            id="checkout-balance-container"
+            style="margin-top: 1rem; display: none"
+          >
+            <p>
+              Outstanding balance:
+              <strong>₹<span id="confirm-checkout-balance">0</span></strong>
+            </p>
+
+            <div class="form-group" style="margin-top: 1rem">
+              <label
+                style="
+                  display: inline-flex;
+                  align-items: center;
+                  cursor: pointer;
+                  margin-bottom: 0.5rem;
+                "
+              >
+                <input
+                  type="checkbox"
+                  id="settle-later-checkbox"
+                  style="margin-right: 0.5rem"
+                />
+                <span>Allow checkout with "Settle Later" option</span>
+              </label>
+
+              <div
+                id="settlement-notes-container"
+                style="display: none; margin-top: 0.5rem"
+              >
+                <textarea
+                  id="settlement-notes"
+                  class="form-control"
+                  placeholder="Add notes about when/how payment will be made"
+                  rows="2"
+                ></textarea>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="action-row">
           <button
@@ -987,6 +988,165 @@
           </button>
           <button class="action-btn btn-danger" id="proceed-checkout-btn">
             Yes, Checkout
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Add Pending Settlements Modal -->
+    <div class="modal-backdrop" id="pending-settlements-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Pending Settlements</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="filter-container">
+          <button class="filter-btn active" data-filter="pending">
+            Pending
+          </button>
+          <button class="filter-btn" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="paid">Paid</button>
+          <button class="filter-btn" data-filter="cancelled">Cancelled</button>
+        </div>
+
+        <div id="settlements-list">
+          <!-- Settlements will be dynamically populated here -->
+          <div class="loading-indicator">
+            <span class="loader"></span>
+            <p>Loading pending settlements...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Add Settlement Payment Modal -->
+    <div class="modal-backdrop" id="collect-settlement-modal">
+      <div class="modal-content" style="max-width: 450px">
+        <div class="modal-header">
+          <h2>Collect Settlement</h2>
+          <button class="close-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="guest-details">
+          <div class="detail-row">
+            <div class="detail-label">Guest Name</div>
+            <div class="detail-value" id="settlement-guest-name"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Mobile</div>
+            <div class="detail-value">
+              <a href="tel:" id="settlement-guest-mobile" class="call-link">
+                <i class="fas fa-phone"></i>
+                <span id="settlement-mobile-number"></span>
+              </a>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Checkout Date</div>
+            <div class="detail-value" id="settlement-checkout-date"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Room</div>
+            <div class="detail-value" id="settlement-room"></div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Amount Due</div>
+            <div class="detail-value" id="settlement-amount">₹0</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Notes</div>
+            <div class="detail-value" id="settlement-notes">-</div>
+          </div>
+        </div>
+
+        <!-- Add Payment Section -->
+        <div class="form-group" style="margin-top: 1.5rem">
+          <label class="form-label" for="settlement-payment-amount"
+            >Payment Amount (₹)</label
+          >
+          <input
+            type="number"
+            class="form-control"
+            id="settlement-payment-amount"
+            placeholder="Enter payment amount"
+            min="0"
+          />
+          <small class="form-helper">Leave blank for full amount</small>
+        </div>
+
+        <!-- Add Discount Section -->
+        <div class="form-group">
+          <label class="form-label" for="settlement-discount-amount"
+            >Discount Amount (₹)</label
+          >
+          <input
+            type="number"
+            class="form-control"
+            id="settlement-discount-amount"
+            placeholder="Enter discount amount"
+            min="0"
+            value="0"
+          />
+        </div>
+
+        <!-- Discount Reason -->
+        <div
+          class="form-group"
+          id="settlement-discount-reason-container"
+          style="display: none"
+        >
+          <label class="form-label" for="settlement-discount-reason"
+            >Discount Reason</label
+          >
+          <select class="form-control" id="settlement-discount-reason">
+            <option value="Regular Customer">Regular Customer</option>
+            <option value="Special Offer">Special Offer</option>
+            <option value="Long Stay">Long Stay</option>
+            <option value="Complaint Resolution">Complaint Resolution</option>
+            <option value="Other">Other</option>
+          </select>
+
+          <div
+            id="settlement-other-reason-container"
+            style="display: none; margin-top: 0.5rem"
+          >
+            <input
+              type="text"
+              class="form-control"
+              id="settlement-other-discount-reason"
+              placeholder="Specify reason"
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Payment Method</label>
+          <div class="payment-options">
+            <button
+              type="button"
+              class="payment-btn cash active"
+              data-payment="cash"
+            >
+              <i class="fas fa-money-bill"></i> Cash
+            </button>
+            <button
+              type="button"
+              class="payment-btn online"
+              data-payment="online"
+            >
+              <i class="fas fa-mobile-alt"></i> Online
+            </button>
+          </div>
+          <input type="hidden" id="settlement-payment-method" value="cash" />
+        </div>
+
+        <div class="action-row">
+          <button class="action-btn btn-secondary" id="cancel-settlement-btn">
+            Cancel Settlement
+          </button>
+          <button class="action-btn btn-success" id="collect-payment-btn">
+            Collect Payment
           </button>
         </div>
       </div>
@@ -1813,5 +1973,10 @@
     <script src="/static/expense.js"></script>
     <script src="/static/booking.js"></script>
     <script src="/static/history.js"></script>
+    <script src="/static/settle-later.js"></script>
+    <script src="/static/settle-later-fix.js"></script>
+    <script src="/static/revenue-protection.js"></script>
+    <script src="/static/transaction-tracking.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   </body>
 </html>
