@@ -1,5 +1,64 @@
 // Global variables
 let rooms = {};
+let transactionMetadata = {};
+let dailyCounters = {};
+
+// Keep logs and totals variables as they're used throughout the app
+let logs = {
+  cash: [],
+  online: [],
+  balance: [],
+  add_ons: [],
+  refunds: [],
+  renewals: [],
+  expenses: [], // Added expenses array
+  discounts: [], // Added discounts array
+};
+let totals = { cash: 0, online: 0, balance: 0, refunds: 0 };
+let activePaymentMethod = "cash";
+let currentFilter = "all";
+let currentFloor = "all";
+let searchTerm = "";
+let capturedPhotoData = null; // For storing camera photo
+let uploadedPhotoUrl = null; // For storing uploaded photo URL
+let mediaStream = null; // For camera access
+let selectedService = null; // For tracking selected service
+let servicePaymentMethod = "cash"; // Default payment method for services
+
+// DOM Elements - with null checks
+const roomsGrid = document.getElementById("rooms-grid");
+const vacantCount = document.getElementById("vacant-count");
+const occupiedCount = document.getElementById("occupied-count");
+const pendingBalance = document.getElementById("pending-balance");
+const todayRevenue = document.getElementById("today-revenue");
+const cashTotal = document.getElementById("cash-total");
+const onlineTotal = document.getElementById("online-total");
+const refundTotal = document.getElementById("refund-total");
+const totalRevenue = document.getElementById("total-revenue");
+const transactionLog = document.getElementById("transaction-log");
+const roomSearch = document.getElementById("room-search");
+const refreshBtn = document.getElementById("refresh-btn");
+const settingsBtn = document.getElementById("settings-btn");
+const paymentOrRefundSection = document.getElementById(
+  "payment-or-refund-section"
+);
+const notificationContainer = document.getElementById("notification-container");
+
+// Initialize modals
+const checkinModal = document.getElementById("checkin-modal");
+const checkoutModal = document.getElementById("checkout-modal");
+const editTimeModal = document.getElementById("edit-time-modal");
+const rentRenewalModal = document.getElementById("rent-renewal-modal");
+const roomDetailsModal = document.getElementById("room-details-modal");
+const addRoomModal = document.getElementById("add-room-modal");
+
+// Service form elements
+const serviceForm = document.getElementById("service-form");
+const serviceName = document.getElementById("service-name");
+const servicePrice = document.getElementById("service-price");
+const servicePaymentMethodInput = document.getElementById(
+  "service-payment-method"
+);
 
 // Camera functionality
 function initCamera() {
@@ -151,743 +210,6 @@ function initCamera() {
   }
 }
 
-// Event Listeners
-document.addEventListener("DOMContentLoaded", function () {
-  debugLog("DOM loaded, initializing...");
-
-  // Check for key elements
-  if (!roomsGrid) debugLog("WARNING: roomsGrid element missing");
-  if (!checkinModal) debugLog("WARNING: checkinModal element missing");
-  if (!checkoutModal) debugLog("WARNING: checkoutModal element missing");
-  if (!serviceForm) debugLog("WARNING: serviceForm element missing");
-
-  // Initialize camera functionality
-  initCamera();
-
-  // Initialize service buttons
-  initServiceButtons();
-
-  // Fetch initial data
-  fetchData();
-
-  // Bottom navigation
-  document.querySelectorAll(".nav-item").forEach((item) => {
-    item.addEventListener("click", () => {
-      const tabName = item.dataset.tab;
-      debugLog(`Tab clicked: ${tabName}`);
-
-      // Update nav items
-      document.querySelectorAll(".nav-item").forEach((navItem) => {
-        navItem.classList.remove("active");
-      });
-      item.classList.add("active");
-
-      // Update tabs content
-      document.querySelectorAll(".tab-content").forEach((content) => {
-        content.classList.add("hidden");
-      });
-
-      const tabContent = document.getElementById(`${tabName}-tab`);
-      if (tabContent) {
-        tabContent.classList.remove("hidden");
-      } else {
-        debugLog(`Tab content for ${tabName} not found`);
-      }
-    });
-  });
-
-  // Filters
-  document.querySelectorAll(".filter-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document
-        .querySelectorAll(".filter-btn")
-        .forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentFilter = btn.dataset.filter;
-      debugLog(`Filter changed to: ${currentFilter}`);
-      renderRooms();
-    });
-  });
-
-  // Floor filters
-  document.querySelectorAll(".floor-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document
-        .querySelectorAll(".floor-btn")
-        .forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentFloor = btn.dataset.floor;
-      debugLog(`Floor filter changed to: ${currentFloor}`);
-      renderRooms();
-    });
-  });
-
-  // Search functionality
-  if (roomSearch) {
-    roomSearch.addEventListener("input", (e) => {
-      searchTerm = e.target.value.toLowerCase();
-      renderRooms();
-    });
-  }
-
-  // Refresh button
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", () => {
-      refreshBtn.innerHTML =
-        '<span class="loader" style="width: 20px; height: 20px;"></span>';
-      fetchData().then(() => {
-        setTimeout(() => {
-          refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
-        }, 500);
-      });
-    });
-  }
-
-  // Add Room button
-  if (addRoomBtn) {
-    addRoomBtn.addEventListener("click", () => {
-      showAddRoomModal();
-    });
-  }
-
-  // Handle payment method selection for check-in
-  document.querySelectorAll(".payment-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (
-        btn.parentElement &&
-        btn.parentElement.classList.contains("payment-options")
-      ) {
-        const paymentOptions = btn.parentElement;
-        paymentOptions
-          .querySelectorAll(".payment-btn")
-          .forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-
-        if (btn.dataset.payment) {
-          activePaymentMethod = btn.dataset.payment;
-          const paymentMethodInput = document.getElementById("payment-method");
-          if (paymentMethodInput) {
-            paymentMethodInput.value = activePaymentMethod;
-          }
-        }
-      }
-    });
-  });
-
-  // Check-in form validation and submission
-  const checkinForm = document.getElementById("checkin-form");
-  if (checkinForm) {
-    checkinForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-
-      const roomNumberElement = document.getElementById("checkin-room-number");
-      if (!roomNumberElement) {
-        showNotification("Error: Room number element not found", "error");
-        return;
-      }
-
-      const roomNumber = roomNumberElement.textContent;
-      const guestName = document.getElementById("guest-name")?.value;
-      const guestMobile = document.getElementById("guest-mobile")?.value;
-      const roomPrice = document.getElementById("room-price")?.value;
-      const guestCount = document.getElementById("guest-count")?.value;
-      const amountPaid = parseInt(
-        document.getElementById("amount-paid")?.value || "0"
-      );
-      const paymentMethod = document.getElementById("payment-method")?.value;
-
-      if (!guestName || !guestMobile || !roomPrice || !guestCount) {
-        showNotification("Please fill all required fields", "error");
-        return;
-      }
-
-      // Don't allow amount paid > 0 when payment method is "balance"
-      if (amountPaid > 0 && paymentMethod === "balance") {
-        showNotification(
-          'Cannot select "Pay Later" when amount is provided. Please select Cash or Online payment method.',
-          "error"
-        );
-        return;
-      }
-
-      // Disable submit button and show loading state
-      const submitBtn = e.target.querySelector("button[type=submit]");
-      if (!submitBtn) {
-        showNotification("Submit button not found", "error");
-        return;
-      }
-
-      const originalContent = submitBtn.innerHTML;
-      submitBtn.disabled = true;
-      submitBtn.innerHTML =
-        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
-
-      try {
-        const response = await fetch("/checkin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            room: roomNumber,
-            name: guestName,
-            mobile: guestMobile,
-            price: roomPrice,
-            guests: guestCount,
-            payment: paymentMethod,
-            amountPaid: amountPaid,
-            photoPath: uploadedPhotoUrl,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server responded with status: ${response.status}`);
-        }
-
-        const result = await response.json();
-        if (result.success) {
-          checkinModal.classList.remove("show");
-          await fetchData();
-          showNotification(result.message || "Check-in successful!", "success");
-        } else {
-          showNotification(result.message || "Error during check-in", "error");
-        }
-      } catch (error) {
-        console.error("Error during check-in:", error);
-        showNotification(`Error during check-in: ${error.message}`, "error");
-      } finally {
-        // Re-enable submit button
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = "Complete Check-in";
-      }
-    });
-  } else {
-    debugLog("Check-in form not found");
-  }
-
-  // Cancel checkout
-  const cancelCheckoutBtn = document.getElementById("cancel-checkout-btn");
-  if (cancelCheckoutBtn) {
-    cancelCheckoutBtn.addEventListener("click", () => {
-      checkoutModal.classList.remove("show");
-    });
-  }
-
-  // Edit check-in time button
-  const editCheckinTimeBtn = document.getElementById("edit-checkin-time");
-  if (editCheckinTimeBtn) {
-    editCheckinTimeBtn.addEventListener("click", () => {
-      const roomNumber = document.getElementById(
-        "checkout-room-number"
-      )?.textContent;
-      const currentTime = document.getElementById(
-        "checkout-checkin-time"
-      )?.textContent;
-      if (roomNumber) {
-        showEditTimeModal(roomNumber, currentTime);
-      }
-    });
-  }
-
-  // Apply report filter
-  const applyReportFilterBtn = document.getElementById("apply-report-filter");
-  if (applyReportFilterBtn) {
-    applyReportFilterBtn.addEventListener("click", generateReport);
-  }
-
-  // Renew all button
-  const renewAllBtn = document.getElementById("renew-all-btn");
-  if (renewAllBtn) {
-    renewAllBtn.addEventListener("click", async function () {
-      const dueRoomElements = document.querySelectorAll(".renewal-item");
-      if (dueRoomElements.length === 0) return;
-
-      this.disabled = true;
-      this.innerHTML =
-        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
-
-      const dueRooms = Array.from(dueRoomElements).map((el) => el.dataset.room);
-
-      let successCount = 0;
-      let failCount = 0;
-
-      for (const room of dueRooms) {
-        try {
-          const roomElement = document.querySelector(
-            `.renewal-item[data-room="${room}"]`
-          );
-          if (!roomElement) continue;
-
-          const buttonElement = roomElement.querySelector(".renew-single-btn");
-          if (!buttonElement) continue;
-
-          // Skip already processed rooms
-          if (buttonElement.innerHTML === "Renewed" || buttonElement.disabled) {
-            continue;
-          }
-
-          // Update button UI
-          buttonElement.disabled = true;
-          buttonElement.innerHTML =
-            '<span class="loader" style="width: 10px; height: 10px;"></span>';
-
-          // Try to renew the room
-          const success = await triggerRentRenewal(room);
-
-          if (success) {
-            successCount++;
-            // Update UI to show this room is processed
-            roomElement.style.backgroundColor = "#e8f4e5";
-            buttonElement.innerHTML = "Renewed";
-          } else {
-            failCount++;
-            buttonElement.disabled = false;
-            buttonElement.innerHTML = "Retry";
-          }
-        } catch (error) {
-          console.error(`Error renewing room ${room}:`, error);
-          failCount++;
-        }
-      }
-
-      this.disabled = false;
-      this.innerHTML = "Renew All Due Rooms";
-
-      if (successCount > 0) {
-        showNotification(
-          `Successfully renewed ${successCount} room${
-            successCount !== 1 ? "s" : ""
-          }`,
-          "success"
-        );
-      }
-
-      if (failCount > 0) {
-        showNotification(
-          `Failed to renew ${failCount} room${failCount !== 1 ? "s" : ""}`,
-          "warning"
-        );
-      }
-
-      // Close modal if all rooms are successfully processed
-      if (failCount === 0) {
-        setTimeout(() => {
-          if (rentRenewalModal) {
-            rentRenewalModal.classList.remove("show");
-          }
-        }, 1500);
-      }
-    });
-  }
-
-  // Close modals
-  document.querySelectorAll(".close-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".modal-backdrop").forEach((modal) => {
-        modal.classList.remove("show");
-      });
-
-      // Stop camera stream if active
-      if (mediaStream) {
-        mediaStream.getTracks().forEach((track) => track.stop());
-        mediaStream = null;
-      }
-    });
-  });
-
-  // Quick action button toggle
-  const quickActionBtn = document.getElementById("quick-action-toggle");
-  const quickActionMenu = document.querySelector(".quick-action-menu");
-
-  if (quickActionBtn && quickActionMenu) {
-    quickActionBtn.addEventListener("click", function () {
-      quickActionMenu.classList.toggle("show");
-    });
-
-    // Close menu when clicking outside
-    document.addEventListener("click", function (event) {
-      if (!event.target.closest(".quick-actions-container")) {
-        quickActionMenu.classList.remove("show");
-      }
-    });
-  }
-
-  // Quick renewals button
-  const quickRenewBtn = document.getElementById("quick-renew-btn");
-  if (quickRenewBtn) {
-    quickRenewBtn.addEventListener("click", function () {
-      showRenewalModal();
-      if (quickActionMenu) {
-        quickActionMenu.classList.remove("show");
-      }
-    });
-  }
-
-  // Add Room form submission
-  const addRoomForm = document.getElementById("add-room-form");
-  if (addRoomForm) {
-    addRoomForm.addEventListener("submit", addRoom);
-  }
-
-  // Set default dates for report
-  const today = new Date().toISOString().split("T")[0];
-  if (document.getElementById("start-date")) {
-    document.getElementById("start-date").value = today;
-  }
-  if (document.getElementById("end-date")) {
-    document.getElementById("end-date").value = today;
-  }
-
-  debugLog("Initialization complete");
-});
-
-// This function will be called when the DOM is fully loaded
-function setupCheckoutConfirmation() {
-  const confirmCheckoutBtn = document.getElementById("confirm-checkout-btn");
-
-  if (!confirmCheckoutBtn) {
-    console.error("Checkout button not found!");
-    return;
-  }
-
-  // Add the event listener to the checkout button
-  confirmCheckoutBtn.addEventListener("click", function (event) {
-    // Prevent default action if any
-    event.preventDefault();
-
-    const roomNumberElement = document.getElementById("checkout-room-number");
-    const guestNameElement = document.getElementById("checkout-guest-name");
-
-    if (!roomNumberElement) {
-      showNotification("Room number element not found", "error");
-      console.error("Room number element not found");
-      return;
-    }
-
-    const roomNumber = roomNumberElement.textContent;
-    const guestName = guestNameElement
-      ? guestNameElement.textContent
-      : "Unknown";
-    const balance = rooms[roomNumber].balance;
-
-    // If balance is positive, show warning and don't proceed
-    if (balance > 0) {
-      showNotification("Please clear the balance before checkout", "error");
-      console.log("Checkout blocked - positive balance");
-      return;
-    }
-
-    // Set the room and guest name in the confirmation modal
-    const confirmRoomElement = document.getElementById("confirm-checkout-room");
-    const confirmGuestElement = document.getElementById(
-      "confirm-checkout-guest"
-    );
-
-    if (confirmRoomElement) confirmRoomElement.textContent = roomNumber;
-    if (confirmGuestElement) confirmGuestElement.textContent = guestName;
-
-    // Show the confirmation modal
-    const checkoutConfirmModal = document.getElementById(
-      "checkout-confirm-modal"
-    );
-    if (checkoutConfirmModal) {
-      checkoutConfirmModal.classList.add("show");
-      console.log("Confirmation modal displayed");
-    } else {
-      console.error("Confirmation modal element not found");
-      showNotification("Error: Confirmation modal not found", "error");
-    }
-  });
-
-  // Handle the cancel button in the confirmation modal
-  const cancelConfirmBtn = document.getElementById(
-    "cancel-confirm-checkout-btn"
-  );
-  if (cancelConfirmBtn) {
-    cancelConfirmBtn.addEventListener("click", function () {
-      console.log("Cancel confirmation clicked");
-      const checkoutConfirmModal = document.getElementById(
-        "checkout-confirm-modal"
-      );
-      if (checkoutConfirmModal) {
-        checkoutConfirmModal.classList.remove("show");
-      }
-    });
-  }
-
-  // Handle the close button in the confirmation modal
-  const confirmModalCloseBtn = document.querySelector(
-    "#checkout-confirm-modal .close-btn"
-  );
-  if (confirmModalCloseBtn) {
-    confirmModalCloseBtn.addEventListener("click", function () {
-      console.log("Close confirmation modal clicked");
-      const checkoutConfirmModal = document.getElementById(
-        "checkout-confirm-modal"
-      );
-      if (checkoutConfirmModal) {
-        checkoutConfirmModal.classList.remove("show");
-      }
-    });
-  }
-
-  // Handle the proceed button in the confirmation modal
-  const proceedCheckoutBtn = document.getElementById("proceed-checkout-btn");
-  if (proceedCheckoutBtn) {
-    proceedCheckoutBtn.addEventListener("click", async function () {
-      console.log("Proceed checkout clicked");
-
-      // Disable button and show loading state
-      this.disabled = true;
-      this.innerHTML =
-        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
-
-      const roomNumberElement = document.getElementById("checkout-room-number");
-      if (!roomNumberElement) {
-        showNotification("Room number element not found", "error");
-        console.error("Room number element not found during checkout");
-        return;
-      }
-
-      const roomNumber = roomNumberElement.textContent;
-      const balance = rooms[roomNumber].balance;
-
-      // Get refund method if there's a negative balance
-      const refundMethod =
-        balance < 0
-          ? document.querySelector(".refund-container .payment-btn.active")
-              ?.id === "refund-cash-btn"
-            ? "cash"
-            : "online"
-          : null;
-
-      try {
-        console.log("Sending checkout request to server");
-        const response = await fetch("/checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            room: roomNumber,
-            final_checkout: true,
-            refund_method: refundMethod,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server responded with status: ${response.status}`);
-        }
-
-        const result = await response.json();
-        if (result.success) {
-          console.log("Checkout successful");
-          // Close both modals
-          const checkoutConfirmModal = document.getElementById(
-            "checkout-confirm-modal"
-          );
-          if (checkoutConfirmModal) {
-            checkoutConfirmModal.classList.remove("show");
-          }
-
-          const checkoutModal = document.getElementById("checkout-modal");
-          if (checkoutModal) {
-            checkoutModal.classList.remove("show");
-          }
-
-          await fetchData();
-          showNotification("Checkout successful!", "success");
-        } else {
-          console.error("Checkout failed:", result.message);
-          showNotification(result.message || "Error during checkout", "error");
-        }
-      } catch (error) {
-        console.error("Error during checkout:", error);
-        showNotification(`Error during checkout: ${error.message}`, "error");
-      } finally {
-        // Re-enable button
-        this.disabled = false;
-        this.innerHTML = "Yes, Checkout";
-      }
-    });
-  } else {
-    console.error("Proceed checkout button not found");
-  }
-}
-
-// Call this function when the DOM is loaded
-document.addEventListener("DOMContentLoaded", function () {
-  // Delay the setup slightly to ensure all elements are ready
-  setTimeout(setupCheckoutConfirmation, 500);
-
-  // Modify updateStats function to subtract refunds from today's totals
-  if (typeof updateStats === "function") {
-    const originalUpdateStats = updateStats;
-
-    window.updateStats = function () {
-      let vacant = 0;
-      let occupied = 0;
-      let balance = 0;
-      let renewalsDue = 0;
-
-      Object.values(rooms).forEach((room) => {
-        if (room.status === "vacant") {
-          vacant++;
-        } else if (room.status === "occupied") {
-          occupied++;
-          if (room.balance > 0) {
-            balance += room.balance;
-          }
-
-          // Check if room is due for renewal
-          const renewalStatus = getRoomRenewalStatus(room);
-          if (renewalStatus && renewalStatus.canRenew) {
-            renewalsDue++;
-          }
-        }
-      });
-
-      if (vacantCount) vacantCount.textContent = vacant;
-      if (occupiedCount) occupiedCount.textContent = occupied;
-      if (pendingBalance) pendingBalance.textContent = "₹" + balance;
-
-      // Calculate today's revenue with cash/online split and subtract refunds
-      const today = new Date().toISOString().split("T")[0];
-
-      // Get today's transactions
-      const todayCashLogs = logs.cash.filter((log) => log.date === today);
-      const todayOnlineLogs = logs.online.filter((log) => log.date === today);
-      const todayRefundLogs = (logs.refunds || []).filter(
-        (log) => log.date === today
-      );
-
-      // Calculate totals
-      const todayCashTotal = todayCashLogs.reduce(
-        (sum, log) => sum + log.amount,
-        0
-      );
-      const todayOnlineTotal = todayOnlineLogs.reduce(
-        (sum, log) => sum + log.amount,
-        0
-      );
-
-      // Calculate refunds by payment method
-      const todayCashRefunds = todayRefundLogs
-        .filter((log) => log.payment_mode === "cash" || !log.payment_mode) // Include undefined payment_mode as cash for backwards compatibility
-        .reduce((sum, log) => sum + log.amount, 0);
-
-      const todayOnlineRefunds = todayRefundLogs
-        .filter((log) => log.payment_mode === "online")
-        .reduce((sum, log) => sum + log.amount, 0);
-
-      // Calculate net amounts (subtracting refunds)
-      const netCashTotal = todayCashTotal - todayCashRefunds;
-      const netOnlineTotal = todayOnlineTotal - todayOnlineRefunds;
-      const todayTotal = netCashTotal + netOnlineTotal;
-
-      // Update the dashboard with separate cash/online totals
-      const todayCashElement = document.getElementById("today-cash");
-      const todayOnlineElement = document.getElementById("today-online");
-
-      if (todayCashElement) todayCashElement.textContent = "₹" + netCashTotal;
-      if (todayOnlineElement)
-        todayOnlineElement.textContent = "₹" + netOnlineTotal;
-      if (todayRevenue) todayRevenue.textContent = "₹" + todayTotal;
-
-      // Update quick action renewal badge
-      const quickRenewBtn = document.getElementById("quick-renew-btn");
-      if (quickRenewBtn && renewalsDue > 0) {
-        quickRenewBtn.innerHTML = `
-            <i class="fas fa-sync-alt"></i>
-            <span>Renewals Due <span style="background-color: var(--danger); padding: 2px 6px; border-radius: 50%; margin-left: 5px; font-size: 0.7rem;">${renewalsDue}</span></span>
-          `;
-      } else if (quickRenewBtn) {
-        quickRenewBtn.innerHTML = `
-            <i class="fas fa-sync-alt"></i>
-            <span>Renewals Due</span>
-          `;
-      }
-    };
-  }
-});
-
-// Upload photo to server
-async function uploadPhoto(file) {
-  try {
-    const formData = new FormData();
-    formData.append("photo", file);
-
-    const response = await fetch("/upload_photo", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server responded with status: ${response.status}`);
-    }
-
-    const result = await response.json();
-    if (result.success) {
-      uploadedPhotoUrl = result.path;
-    } else {
-      showNotification(result.message || "Error uploading photo", "error");
-    }
-  } catch (error) {
-    console.error("Error uploading photo:", error);
-    showNotification(`Error uploading photo: ${error.message}`, "error");
-  }
-}
-let logs = {
-  cash: [],
-  online: [],
-  balance: [],
-  add_ons: [],
-  refunds: [],
-  renewals: [],
-};
-let totals = { cash: 0, online: 0, balance: 0, refunds: 0 };
-let activePaymentMethod = "cash";
-let currentFilter = "all";
-let currentFloor = "all";
-let searchTerm = "";
-let capturedPhotoData = null; // For storing camera photo
-let uploadedPhotoUrl = null; // For storing uploaded photo URL
-let mediaStream = null; // For camera access
-let selectedService = null; // For tracking selected service
-let servicePaymentMethod = "cash"; // Default payment method for services
-
-// DOM Elements - with null checks
-const roomsGrid = document.getElementById("rooms-grid");
-const vacantCount = document.getElementById("vacant-count");
-const occupiedCount = document.getElementById("occupied-count");
-const pendingBalance = document.getElementById("pending-balance");
-const todayRevenue = document.getElementById("today-revenue");
-const cashTotal = document.getElementById("cash-total");
-const onlineTotal = document.getElementById("online-total");
-const refundTotal = document.getElementById("refund-total");
-const totalRevenue = document.getElementById("total-revenue");
-const transactionLog = document.getElementById("transaction-log");
-const roomSearch = document.getElementById("room-search");
-const refreshBtn = document.getElementById("refresh-btn");
-const settingsBtn = document.getElementById("settings-btn");
-const paymentOrRefundSection = document.getElementById(
-  "payment-or-refund-section"
-);
-const notificationContainer = document.getElementById("notification-container");
-const addRoomBtn = document.getElementById("add-room-btn");
-
-// Initialize modals
-const checkinModal = document.getElementById("checkin-modal");
-const checkoutModal = document.getElementById("checkout-modal");
-const editTimeModal = document.getElementById("edit-time-modal");
-const rentRenewalModal = document.getElementById("rent-renewal-modal");
-const roomDetailsModal = document.getElementById("room-details-modal");
-const addRoomModal = document.getElementById("add-room-modal");
-
-// Service form elements
-const serviceForm = document.getElementById("service-form");
-const serviceName = document.getElementById("service-name");
-const servicePrice = document.getElementById("service-price");
-const servicePaymentMethodInput = document.getElementById(
-  "service-payment-method"
-);
-
 // Debug log function
 function debugLog(message) {
   console.log("[DEBUG] " + message);
@@ -962,8 +284,7 @@ function closeNotification(notification) {
   }
 }
 
-// Render rooms in grid
-// Update room timer logic to show 2 hours prior to checkout
+// Function to render room cards
 function renderRooms() {
   if (!roomsGrid) {
     debugLog("roomsGrid element not found");
@@ -1017,15 +338,41 @@ function renderRooms() {
     let roomContent = `
       <div class="room-status ${info.status}"></div>
       <div class="room-content">
-        <div class="room-number">${roomNumber}</div>
     `;
 
+    // For occupied rooms, add AC indicator and guest count
     if (info.status === "occupied" && info.guest) {
-      // Add guest information
+      const guestCount = info.guest.guests || 1;
+
+      // Check if room number is in the AC range (202-205) AND if the AC toggle was on during check-in
+      const roomNum = parseInt(roomNumber);
+      const isPremiumACRoom = roomNum >= 202 && roomNum <= 205;
+      const isAcRoom = isPremiumACRoom && info.guest.isAC === true;
+
       roomContent += `
+        <div class="room-number-row">
+          ${
+            isAcRoom
+              ? '<span class="ac-indicator">❄️</span>'
+              : '<span class="ac-indicator-placeholder"></span>'
+          }
+          <div class="room-number">${roomNumber}</div>
+          <span class="guest-count-indicator" data-guests="${guestCount}">
+            <i class="fas fa-user" style="font-size: 0.7rem; margin-right: 2px;"></i>${guestCount}
+          </span>
+        </div>
         <div class="guest-name">${info.guest.name}</div>
       `;
+    } else {
+      // For vacant rooms, just show the room number without AC/guest indicators
+      roomContent += `
+        <div class="room-number">${roomNumber}</div>
+        <div class="guest-name">Vacant</div>
+      `;
+    }
 
+    // Show day indicator for renewals
+    if (info.status === "occupied" && info.guest) {
       // Get renewal status
       const renewalStatus = getRoomRenewalStatus(info);
 
@@ -1042,15 +389,14 @@ function renderRooms() {
         </div>
       `;
 
-      // Always show checkout timer for occupied rooms
-      // This is the key change - show the timer for any room that has less than 2 hours left
+      // Show checkout timer for occupied rooms
       if (renewalStatus.expired) {
         // If already expired, show renewal badge
         roomContent += `
           <div class="renewal-badge" id="renewal-badge-${roomNumber}">Renewal Due</div>
         `;
       } else if (renewalStatus.hoursLeft <= 2) {
-        // Show timer when less than 2 hours remaining (this is the key change)
+        // Show timer when less than 2 hours remaining
         const isWarning = renewalStatus.hoursLeft < 2;
         let timerText = `${renewalStatus.hoursLeft}h ${renewalStatus.minutesLeft}m left`;
 
@@ -1080,7 +426,6 @@ function renderRooms() {
     } else {
       // Show vacant room info
       roomContent += `
-        <div class="guest-name">Vacant</div>
         <div class="room-footer">
           <div>Available</div>
         </div>
@@ -1090,7 +435,7 @@ function renderRooms() {
     roomContent += `</div>`;
     roomCard.innerHTML = roomContent;
 
-    // Setup click handlers and other event listeners as before
+    // Setup click handlers and other event listeners
     roomCard.addEventListener("click", () => {
       if (info.status === "vacant") {
         showCheckinModal(roomNumber);
@@ -1148,156 +493,6 @@ function renderRooms() {
   }
 }
 
-// Render transaction logs
-function renderLogs() {
-  if (!transactionLog) {
-    debugLog("Transaction log element not found");
-    return;
-  }
-
-  // Get today's date and previous dates
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const dayBeforeYesterday = new Date(today);
-  dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 2);
-
-  const todayStr = today.toISOString().split("T")[0];
-  const yesterdayStr = yesterday.toISOString().split("T")[0];
-  const dayBeforeYesterdayStr = dayBeforeYesterday.toISOString().split("T")[0];
-
-  // Filter logs for the past 2 days + today
-  const recentDates = [todayStr, yesterdayStr, dayBeforeYesterdayStr];
-
-  // Filter logs for the recent dates with null checks
-  const recentCashLogs = (logs.cash || []).filter((log) =>
-    recentDates.includes(log.date)
-  );
-  const recentOnlineLogs = (logs.online || []).filter((log) =>
-    recentDates.includes(log.date)
-  );
-  const recentRefundLogs = (logs.refunds || []).filter((log) =>
-    recentDates.includes(log.date)
-  );
-
-  // Make sure discounts array exists and is filtered properly
-  const discountLogs = logs.discounts || [];
-  console.log("Discount logs:", discountLogs); // Debug log to see if discounts exist
-
-  const recentDiscountLogs = discountLogs.filter((log) =>
-    recentDates.includes(log.date)
-  );
-
-  console.log("Recent discount logs:", recentDiscountLogs); // Debug to see filtered discounts
-
-  // Combine and sort by date and time (most recent first)
-  const allRecentLogs = [
-    ...recentCashLogs,
-    ...recentOnlineLogs,
-    ...recentRefundLogs,
-    ...recentDiscountLogs,
-  ].sort((a, b) => {
-    const dateA = new Date(`${a.date} ${a.time || "00:00"}`);
-    const dateB = new Date(`${b.date} ${b.time || "00:00"}`);
-    return dateB - dateA;
-  });
-
-  // Update totals
-  if (cashTotal) cashTotal.textContent = "₹" + totals.cash;
-  if (onlineTotal) onlineTotal.textContent = "₹" + totals.online;
-  if (refundTotal) refundTotal.textContent = "₹" + (totals.refunds || 0);
-  if (totalRevenue)
-    totalRevenue.textContent =
-      "₹" + (totals.cash + totals.online - (totals.refunds || 0));
-
-  // Render logs
-  if (allRecentLogs.length === 0) {
-    transactionLog.innerHTML = `<div class="empty-state" style="padding: 2rem;">
-      <i class="fas fa-receipt fa-3x"></i>
-      <p>No transactions in the past 3 days</p>
-    </div>`;
-    return;
-  }
-
-  // Group logs by date
-  const logsByDate = {};
-  allRecentLogs.forEach((log) => {
-    if (!logsByDate[log.date]) {
-      logsByDate[log.date] = [];
-    }
-    logsByDate[log.date].push(log);
-  });
-
-  let logsHTML = "";
-
-  // Format date for display
-  function formatDate(dateStr) {
-    const date = new Date(dateStr);
-    const options = { weekday: "long", month: "short", day: "numeric" };
-    return date.toLocaleDateString("en-US", options);
-  }
-
-  // Add section for each date
-  Object.keys(logsByDate)
-    .sort((a, b) => new Date(b) - new Date(a)) // Sort dates in descending order
-    .forEach((date) => {
-      // Add date header
-      let dateDisplay = formatDate(date);
-
-      // Mark today, yesterday
-      if (date === todayStr) {
-        dateDisplay = "Today (" + dateDisplay + ")";
-      } else if (date === yesterdayStr) {
-        dateDisplay = "Yesterday (" + dateDisplay + ")";
-      }
-
-      logsHTML += `<div class="log-date-header">${dateDisplay}</div>`;
-
-      // Add logs for this date
-      logsByDate[date].forEach((log) => {
-        let type = "Unknown";
-        let color = "";
-        let additionalInfo = "";
-
-        // Determine log type and styling
-        if (recentCashLogs.includes(log)) {
-          type = "Cash Payment";
-        } else if (recentOnlineLogs.includes(log)) {
-          type = "Online Payment";
-        } else if (recentRefundLogs.includes(log)) {
-          type = "Refund";
-          color = 'style="color: var(--danger)"';
-        } else if (recentDiscountLogs.includes(log)) {
-          // Special handling for discount logs
-          type = "Discount";
-          color = 'style="color: var(--success)"';
-          additionalInfo = log.reason ? ` (${log.reason})` : "";
-        }
-
-        // Add room shift indicator if applicable
-        const shiftInfo = log.room_shifted
-          ? `<span class="room-shifted-badge">Shifted: ${log.old_room} → ${log.room}</span>`
-          : "";
-
-        logsHTML += `
-          <div class="log-item">
-            <div class="log-details">
-              <div class="log-title">Room ${log.room} - ${
-          log.name
-        }${shiftInfo}</div>
-              <div class="log-subtitle">${type}${additionalInfo} at ${
-          log.time || "N/A"
-        }</div>
-            </div>
-            <div class="log-amount" ${color}>₹${log.amount}</div>
-          </div>
-        `;
-      });
-    });
-
-  transactionLog.innerHTML = logsHTML;
-}
-
 // Fetch data from the server
 async function fetchData() {
   try {
@@ -1313,6 +508,20 @@ async function fetchData() {
     rooms = data.rooms;
     logs = data.logs;
     totals = data.totals;
+
+    // Fetch transaction metadata
+    try {
+      const metadataResponse = await fetch("/get_transaction_metadata");
+      if (metadataResponse.ok) {
+        const metadataData = await metadataResponse.json();
+        if (metadataData.success) {
+          transactionMetadata = metadataData.transaction_metadata || {};
+          dailyCounters = metadataData.daily_counters || {};
+        }
+      }
+    } catch (error) {
+      console.warn("Could not fetch transaction metadata:", error);
+    }
 
     // Process rooms to ensure they have renewal data
     Object.entries(rooms).forEach(([roomNumber, roomInfo]) => {
@@ -1348,8 +557,14 @@ async function fetchData() {
     });
 
     renderRooms();
-    renderLogs();
+
+    // Use transaction log manager for rendering logs
+    if (typeof renderEnhancedLogs === "function") {
+      renderEnhancedLogs();
+    }
+
     updateStats();
+    updateStatsToggleBadge();
 
     return true;
   } catch (error) {
@@ -1922,8 +1137,10 @@ function updateCheckoutModal(roomNumber) {
   // Update payment or refund UI
   updatePaymentOrRefundUI(roomNumber);
 
-  // Update payment logs
-  updatePaymentLogs(roomNumber);
+  // Update payment logs using transaction log manager
+  if (typeof updatePaymentLogs === "function") {
+    updatePaymentLogs(roomNumber);
+  }
 }
 
 // Show checkout modal with detailed info
@@ -2006,407 +1223,6 @@ function updateRenewalHistory(roomNumber) {
   nextRenewalTime.innerHTML = `<i class="fas fa-clock"></i> ${nextRenewalStr}`;
 }
 
-// Update payment logs in checkout modal
-function updatePaymentLogs(roomNumber) {
-  const paymentLogsContainer = document.getElementById("checkout-payment-logs");
-  if (!paymentLogsContainer) {
-    debugLog("Payment logs container not found");
-    return;
-  }
-
-  // Show loading indicator
-  paymentLogsContainer.innerHTML = `<div class="loading-indicator"><span class="loader"></span></div>`;
-
-  // Get all payments for this room and current occupancy only
-  const roomInfo = rooms[roomNumber];
-  if (!roomInfo || !roomInfo.guest || !roomInfo.checkin_time) {
-    paymentLogsContainer.innerHTML =
-      '<div class="log-item">No payments recorded</div>';
-    return;
-  }
-
-  setTimeout(() => {
-    // Get current check-in time to filter logs for current occupancy only
-    const currentCheckinTime = new Date(roomInfo.checkin_time);
-
-    // Filter payments for current guest only, and after current check-in
-    const cashPayments = logs.cash.filter((log) => {
-      // Must match room and guest name
-      if (log.room !== roomNumber || log.name !== roomInfo.guest.name) {
-        return false;
-      }
-
-      // If log has date/time information, make sure it's after check-in
-      if (log.date && log.time) {
-        const logTime = new Date(`${log.date} ${log.time}`);
-        return logTime >= currentCheckinTime;
-      }
-
-      // If no date/time info, include by default
-      return true;
-    });
-
-    const onlinePayments = logs.online.filter((log) => {
-      // Similar filtering logic as cash payments
-      if (log.room !== roomNumber || log.name !== roomInfo.guest.name) {
-        return false;
-      }
-
-      if (log.date && log.time) {
-        const logTime = new Date(`${log.date} ${log.time}`);
-        return logTime >= currentCheckinTime;
-      }
-
-      return true;
-    });
-
-    const refundPayments = (logs.refunds || []).filter((log) => {
-      // Similar filtering logic
-      if (log.room !== roomNumber || log.name !== roomInfo.guest.name) {
-        return false;
-      }
-
-      if (log.date && log.time) {
-        const logTime = new Date(`${log.date} ${log.time}`);
-        return logTime >= currentCheckinTime;
-      }
-
-      return true;
-    });
-
-    // Filter add-ons based on check-in time
-    const addOnPayments = (logs.add_ons || []).filter((log) => {
-      // Similar filtering logic
-      if (log.room !== roomNumber) {
-        return false;
-      }
-
-      if (log.date && log.time) {
-        const logTime = new Date(`${log.date} ${log.time}`);
-        return logTime >= currentCheckinTime;
-      }
-
-      return true;
-    });
-
-    // Add discount logs
-    const discountLogs = (logs.discounts || []).filter((log) => {
-      if (log.room !== roomNumber || log.name !== roomInfo.guest.name) {
-        return false;
-      }
-
-      if (log.date && log.time) {
-        const logTime = new Date(`${log.date} ${log.time}`);
-        return logTime >= currentCheckinTime;
-      }
-
-      return true;
-    });
-
-    // Create a map to track processed transactions to avoid duplicates
-    const processedTransactions = new Map();
-
-    // Combine all payments and sort by time (most recent first)
-    const allPayments = [
-      ...cashPayments,
-      ...onlinePayments,
-      ...refundPayments,
-      ...addOnPayments,
-      ...discountLogs,
-    ].sort((a, b) => {
-      const dateA = a.date
-        ? new Date(`${a.date} ${a.time || "00:00"}`)
-        : new Date(0);
-      const dateB = b.date
-        ? new Date(`${b.date} ${b.time || "00:00"}`)
-        : new Date(0);
-      return dateB - dateA; // Most recent first
-    });
-
-    if (allPayments.length === 0) {
-      paymentLogsContainer.innerHTML =
-        '<div class="log-item">No payments recorded</div>';
-      return;
-    }
-
-    let logsHtml = "";
-    allPayments.forEach((payment) => {
-      let paymentType,
-        colorStyle = "",
-        amountText = "",
-        paymentMethod = "";
-
-      // Create a unique key for this transaction to avoid duplicates
-      // Use timestamp, amount and item (if exists) to identify unique transactions
-      const transactionKey = `${payment.date}-${payment.time}-${
-        payment.amount || payment.price
-      }-${payment.item || ""}-${payment.reason || ""}`;
-
-      // Skip if we've already processed this transaction
-      if (processedTransactions.has(transactionKey)) {
-        return;
-      }
-
-      processedTransactions.set(transactionKey, true);
-
-      if (cashPayments.includes(payment)) {
-        // Check if this is a service payment (has an item property)
-        if (payment.item) {
-          paymentType = `Add-on: ${payment.item}`;
-          colorStyle = "style='color: var(--warning)'";
-          paymentMethod = `<span class="service-payment-badge cash">cash</span>`;
-          amountText = `₹${payment.amount}`;
-        } else {
-          paymentType = "Cash Payment";
-          amountText = `₹${payment.amount}`;
-        }
-      } else if (onlinePayments.includes(payment)) {
-        // Check if this is a service payment (has an item property)
-        if (payment.item) {
-          paymentType = `Add-on: ${payment.item}`;
-          colorStyle = "style='color: var(--warning)'";
-          paymentMethod = `<span class="service-payment-badge online">online</span>`;
-          amountText = `₹${payment.amount}`;
-        } else {
-          paymentType = "Online Payment";
-          amountText = `₹${payment.amount}`;
-        }
-      } else if (refundPayments.includes(payment)) {
-        paymentType = "Refund";
-        colorStyle = "style='color: var(--danger)'";
-        amountText = `₹${payment.amount}`;
-      } else if (addOnPayments.includes(payment)) {
-        paymentType = `Add-on: ${payment.item}`;
-        colorStyle = "style='color: var(--warning)'";
-        amountText = `₹${payment.price}`;
-
-        // Add payment method badge for balance add-ons
-        if (payment.payment_method) {
-          const badgeClass = payment.payment_method;
-          paymentMethod = `<span class="service-payment-badge ${badgeClass}">${payment.payment_method}</span>`;
-        } else {
-          paymentMethod = `<span class="service-payment-badge balance">balance</span>`;
-        }
-      } else if (discountLogs.includes(payment)) {
-        // Add discount information
-        paymentType = `Discount: ${payment.reason || ""}`;
-        colorStyle = "style='color: var(--success)'";
-        amountText = `₹${payment.amount}`;
-      }
-
-      logsHtml += `
-        <div class="log-item">
-          <div class="log-details">
-            <div class="log-title">${paymentType}${paymentMethod}</div>
-            <div class="log-subtitle">${payment.time || "N/A"} on ${
-        payment.date || "N/A"
-      }</div>
-          </div>
-          <div class="log-amount" ${colorStyle}>${amountText}</div>
-        </div>
-      `;
-    });
-
-    paymentLogsContainer.innerHTML = logsHtml;
-  }, 300);
-}
-
-// Handle payment
-async function addPayment(mode) {
-  try {
-    const roomNumberElement = document.getElementById("checkout-room-number");
-    if (!roomNumberElement) {
-      showNotification("Error: Room number element not found", "error");
-      return;
-    }
-
-    const roomNumber = roomNumberElement.textContent;
-    const amountInput = document.getElementById("checkout-payment-amount");
-
-    if (!amountInput) {
-      showNotification("Error: Payment amount field not found", "error");
-      return;
-    }
-
-    const amount = parseInt(amountInput.value);
-
-    if (!amount || amount <= 0) {
-      showNotification("Please enter a valid amount", "error");
-      return;
-    }
-
-    // Find which button to use based on mode
-    let btn = null;
-
-    // First try to get the add payment button
-    const addPaymentBtn = document.getElementById("add-payment-btn");
-    if (addPaymentBtn) {
-      btn = addPaymentBtn;
-    } else {
-      // Fall back to individual payment buttons
-      btn = document.getElementById(`checkout-${mode}-btn`);
-    }
-
-    // Show loading state if the button exists
-    let originalContent = "";
-    if (btn) {
-      originalContent = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML =
-        '<span class="loader" style="width: 14px; height: 14px;"></span> Processing...';
-    } else {
-      console.warn(
-        `Button for payment mode ${mode} not found, proceeding anyway`
-      );
-    }
-
-    // Proceed with payment API call
-    const response = await fetch("/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room: roomNumber,
-        payment_mode: mode,
-        amount: amount,
-        is_refund: false,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server responded with status: ${response.status}`);
-    }
-
-    const result = await response.json();
-    await fetchData();
-
-    // Update the checkout modal
-    updateCheckoutModal(roomNumber);
-
-    showNotification(
-      result.message || `Payment of ₹${amount} added successfully`,
-      "success"
-    );
-  } catch (error) {
-    console.error("Error adding payment:", error);
-    showNotification(`Error adding payment: ${error.message}`, "error");
-  } finally {
-    // Re-enable buttons if they exist
-    const addPaymentBtn = document.getElementById("add-payment-btn");
-    const cashBtn = document.getElementById("checkout-cash-btn");
-    const onlineBtn = document.getElementById("checkout-online-btn");
-
-    if (addPaymentBtn) {
-      addPaymentBtn.disabled = false;
-      addPaymentBtn.innerHTML =
-        '<i class="fas fa-plus-circle"></i> Add Payment';
-    }
-
-    if (cashBtn) {
-      cashBtn.disabled = false;
-      cashBtn.innerHTML = '<i class="fas fa-money-bill"></i> Cash';
-    }
-
-    if (onlineBtn) {
-      onlineBtn.disabled = false;
-      onlineBtn.innerHTML = '<i class="fas fa-mobile-alt"></i> Online';
-    }
-  }
-}
-
-// Process refund
-// Updated processRefund function to use the input field value
-async function processRefund() {
-  try {
-    const roomNumberElement = document.getElementById("checkout-room-number");
-    if (!roomNumberElement) {
-      showNotification("Error: Room number element not found", "error");
-      return;
-    }
-
-    const roomNumber = roomNumberElement.textContent;
-
-    // Get the user-specified refund amount from the input field
-    const refundAmountInput = document.getElementById("refund-amount-input");
-    if (!refundAmountInput) {
-      showNotification("Error: Refund amount input not found", "error");
-      return;
-    }
-
-    const refundAmount = parseInt(refundAmountInput.value) || 0;
-    const maxRefundAmount = Math.abs(rooms[roomNumber].balance);
-
-    // Validate the refund amount
-    if (refundAmount <= 0) {
-      showNotification("Please enter a valid refund amount", "error");
-      return;
-    }
-
-    if (refundAmount > maxRefundAmount) {
-      showNotification(
-        `Refund amount cannot exceed ₹${maxRefundAmount}`,
-        "error"
-      );
-      return;
-    }
-
-    const refundMethod =
-      document.querySelector(".refund-container .payment-btn.active")?.id ===
-      "refund-cash-btn"
-        ? "cash"
-        : "online";
-
-    // Disable button and show loading state
-    const btn = document.getElementById("process-refund-btn");
-    if (!btn) {
-      showNotification("Error: Process refund button not found", "error");
-      return;
-    }
-
-    const originalContent = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML =
-      '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
-
-    const response = await fetch("/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room: roomNumber,
-        payment_mode: refundMethod,
-        amount: refundAmount,
-        is_refund: true,
-        process_refund: true,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server responded with status: ${response.status}`);
-    }
-
-    const result = await response.json();
-    if (result.success) {
-      await fetchData();
-      updateCheckoutModal(roomNumber);
-      showNotification(
-        `Refund of ₹${refundAmount} processed successfully!`,
-        "success"
-      );
-    } else {
-      showNotification(result.message || "Error processing refund", "error");
-    }
-  } catch (error) {
-    console.error("Error processing refund:", error);
-    showNotification(`Error processing refund: ${error.message}`, "error");
-  } finally {
-    // Re-enable button
-    const btn = document.getElementById("process-refund-btn");
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = "Process Refund";
-    }
-  }
-}
-
 // Reset service form
 function resetServiceForm() {
   if (!serviceForm) {
@@ -2430,6 +1246,18 @@ function resetServiceForm() {
   const cashBtn = document.querySelector("#service-form .payment-btn.cash");
   if (cashBtn) {
     cashBtn.classList.add("active");
+  }
+
+  // Reset quantity to 1
+  const quantityInput = document.getElementById("service-quantity");
+  if (quantityInput) {
+    quantityInput.value = 1;
+  }
+
+  // Reset total price
+  const totalPriceElement = document.getElementById("service-total-price");
+  if (totalPriceElement) {
+    totalPriceElement.textContent = "₹0";
   }
 
   servicePaymentMethod = "cash";
@@ -2466,12 +1294,21 @@ function initServiceButtons() {
         serviceName.value = service;
         servicePrice.value = price;
 
+        // Reset quantity to 1
+        const quantityInput = document.getElementById("service-quantity");
+        if (quantityInput) {
+          quantityInput.value = 1;
+        }
+
         if (price) {
           servicePrice.readOnly = true;
         } else {
           servicePrice.readOnly = false;
           servicePrice.focus();
         }
+
+        // Update total price
+        updateServiceTotalPrice();
 
         // Show service form
         serviceForm.classList.remove("hidden");
@@ -2483,6 +1320,18 @@ function initServiceButtons() {
       }
     });
   });
+
+  // Add event listeners for price and quantity changes
+  const servicePriceInput = document.getElementById("service-price");
+  const serviceQuantityInput = document.getElementById("service-quantity");
+
+  if (servicePriceInput) {
+    servicePriceInput.addEventListener("input", updateServiceTotalPrice);
+  }
+
+  if (serviceQuantityInput) {
+    serviceQuantityInput.addEventListener("input", updateServiceTotalPrice);
+  }
 
   // Service payment method selection
   const servicePaymentBtns = document.querySelectorAll(
@@ -2531,10 +1380,6 @@ function initServiceButtons() {
 async function addService() {
   try {
     const roomNumberElement = document.getElementById("checkout-room-number");
-    if (!roomNumberElement) {
-      showNotification("Error: Room number element not found", "error");
-      return;
-    }
 
     const roomNumber = roomNumberElement.textContent;
 
@@ -2546,6 +1391,10 @@ async function addService() {
     const service = serviceName.value;
     const price = parseInt(servicePrice.value);
 
+    // Get quantity from the input
+    const quantityInput = document.getElementById("service-quantity");
+    const quantity = quantityInput ? parseInt(quantityInput.value) || 1 : 1;
+
     if (!service) {
       showNotification("Please select a service", "error");
       return;
@@ -2553,6 +1402,11 @@ async function addService() {
 
     if (!price || price <= 0) {
       showNotification("Please enter a valid price", "error");
+      return;
+    }
+
+    if (quantity <= 0) {
+      showNotification("Please enter a valid quantity", "error");
       return;
     }
 
@@ -2567,13 +1421,22 @@ async function addService() {
     addServiceBtn.innerHTML =
       '<span class="loader" style="width: 14px; height: 14px;"></span> Adding...';
 
+    // Calculate total price
+    const totalPrice = price * quantity;
+
+    // Service name with quantity if more than 1
+    const serviceWithQuantity =
+      quantity > 1 ? `${service} × ${quantity}` : service;
+
     const response = await fetch("/add_on", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         room: roomNumber,
-        item: service,
-        price: price,
+        item: serviceWithQuantity,
+        price: totalPrice,
+        unit_price: price,
+        quantity: quantity,
         payment_method: servicePaymentMethod,
       }),
     });
@@ -2589,10 +1452,13 @@ async function addService() {
 
       // Show an appropriate message based on the payment method
       if (servicePaymentMethod === "balance") {
-        showNotification(`Added ${service} (₹${price}) to balance`, "success");
+        showNotification(
+          `Added ${serviceWithQuantity} (₹${totalPrice}) to balance`,
+          "success"
+        );
       } else {
         showNotification(
-          `Added ${service} (₹${price}) - paid by ${servicePaymentMethod}`,
+          `Added ${serviceWithQuantity} (₹${totalPrice}) - paid by ${servicePaymentMethod}`,
           "success"
         );
       }
@@ -2897,88 +1763,6 @@ function showRoomDetailsModal(roomNumber) {
   roomDetailsModal.classList.add("show");
 }
 
-// Show add room modal
-function showAddRoomModal() {
-  if (!addRoomModal) {
-    debugLog("Add room modal not found");
-    return;
-  }
-
-  // Reset the form
-  const addRoomForm = document.getElementById("add-room-form");
-  if (addRoomForm) {
-    addRoomForm.reset();
-  }
-
-  // Show the modal
-  addRoomModal.classList.add("show");
-}
-
-// Add a new room
-async function addRoom(event) {
-  event.preventDefault();
-
-  const roomNumberInput = document.getElementById("new-room-number");
-  if (!roomNumberInput) {
-    showNotification("Error: Room number input not found", "error");
-    return;
-  }
-
-  const roomNumber = roomNumberInput.value.trim();
-
-  if (!roomNumber) {
-    showNotification("Please enter a room number", "error");
-    return;
-  }
-
-  try {
-    // Disable submit button and show loading state
-    const submitBtn = event.target.querySelector("button[type=submit]");
-    if (!submitBtn) {
-      debugLog("Submit button not found in add room form");
-      return;
-    }
-
-    const originalContent = submitBtn.innerHTML;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML =
-      '<span class="loader" style="width: 20px; height: 20px;"></span> Adding...';
-
-    const response = await fetch("/add_room", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        roomNumber: roomNumber,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server responded with status: ${response.status}`);
-    }
-
-    const result = await response.json();
-    if (result.success) {
-      if (addRoomModal) {
-        addRoomModal.classList.remove("show");
-      }
-      await fetchData();
-      showNotification(`Room ${roomNumber} added successfully!`, "success");
-    } else {
-      showNotification(result.message || "Error adding room", "error");
-    }
-  } catch (error) {
-    console.error("Error adding room:", error);
-    showNotification(`Error adding room: ${error.message}`, "error");
-  } finally {
-    // Re-enable submit button
-    const submitBtn = event.target.querySelector("button[type=submit]");
-    if (submitBtn) {
-      submitBtn.disabled = false;
-      submitBtn.innerHTML = "Add Room";
-    }
-  }
-}
-
 async function generateReport() {
   // Just call the enhanced report function in analytics.js
   if (typeof generateEnhancedReport === "function") {
@@ -2988,6 +1772,7 @@ async function generateReport() {
     showNotification("Error: Analytics module not loaded properly", "error");
   }
 }
+
 // Function to populate room dropdown
 async function populateRoomDropdown() {
   const dropdown = document.getElementById("checkin-room-dropdown");
@@ -3275,14 +2060,12 @@ function updatePaymentOrRefundUI(roomNumber) {
     }
   }
 }
+
 async function processRefund() {
   try {
     // Get room number
     const roomNumberElement = document.getElementById("checkout-room-number");
-    if (!roomNumberElement) {
-      showNotification("Error: Room number element not found", "error");
-      return;
-    }
+
     const roomNumber = roomNumberElement.textContent;
 
     // Get guest information for logging
@@ -3413,15 +2196,9 @@ async function processRefund() {
   }
 }
 
-// Modify the addPayment function to ensure refunds only appear when appropriate
 async function addPayment(mode) {
   try {
     const roomNumberElement = document.getElementById("checkout-room-number");
-    if (!roomNumberElement) {
-      showNotification("Error: Room number element not found", "error");
-      return;
-    }
-
     const roomNumber = roomNumberElement.textContent;
     const amountInput = document.getElementById("checkout-payment-amount");
 
@@ -3462,7 +2239,7 @@ async function addPayment(mode) {
       );
     }
 
-    // Proceed with payment API call
+    // Proceed with payment API call - using the fixed backend endpoint
     const response = await fetch("/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3479,15 +2256,19 @@ async function addPayment(mode) {
     }
 
     const result = await response.json();
-    await fetchData();
+    if (result.success) {
+      await fetchData(); // This will refresh all data including transaction logs
 
-    // Update the checkout modal
-    updateCheckoutModal(roomNumber);
+      // Update the checkout modal
+      updateCheckoutModal(roomNumber);
 
-    showNotification(
-      result.message || `Payment of ₹${amount} added successfully`,
-      "success"
-    );
+      showNotification(
+        result.message || `Payment of ₹${amount} added successfully`,
+        "success"
+      );
+    } else {
+      showNotification(result.message || "Error adding payment", "error");
+    }
   } catch (error) {
     console.error("Error adding payment:", error);
     showNotification(`Error adding payment: ${error.message}`, "error");
@@ -3515,127 +2296,458 @@ async function addPayment(mode) {
   }
 }
 
-// Update the checkin form submission to use the selected room number
-document.addEventListener("DOMContentLoaded", function () {
-  // Updated check-in form submission with proper null checks
-  const checkinForm = document.getElementById("checkin-form");
-  if (checkinForm) {
-    checkinForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
+// Upload photo to server
+async function uploadPhoto(file) {
+  try {
+    const formData = new FormData();
+    formData.append("photo", file);
 
-      // Get room number - either from dropdown or fallback to the span
-      let roomNumber = "";
-      const roomDropdown = document.getElementById("checkin-room-dropdown");
-      if (roomDropdown && roomDropdown.value) {
-        roomNumber = roomDropdown.value;
-      } else {
-        const roomNumberElement = document.getElementById(
-          "checkin-room-number"
-        );
-        if (roomNumberElement) {
-          roomNumber = roomNumberElement.textContent;
-        }
-      }
-
-      if (!roomNumber) {
-        showNotification("Please select a room number", "error");
-        return;
-      }
-
-      // Get form values with null checks
-      const guestNameInput = document.getElementById("guest-name");
-      const guestMobileInput = document.getElementById("guest-mobile");
-      const roomPriceInput = document.getElementById("room-price");
-      const guestCountInput = document.getElementById("guest-count");
-      const amountPaidInput = document.getElementById("amount-paid");
-      const paymentMethodInput = document.getElementById("payment-method");
-
-      if (
-        !guestNameInput ||
-        !guestMobileInput ||
-        !roomPriceInput ||
-        !guestCountInput ||
-        !amountPaidInput ||
-        !paymentMethodInput
-      ) {
-        showNotification("Required form fields are missing", "error");
-        return;
-      }
-
-      const guestName = guestNameInput.value;
-      const guestMobile = guestMobileInput.value;
-      const roomPrice = roomPriceInput.value;
-      const guestCount = guestCountInput.value;
-      const amountPaid = parseInt(amountPaidInput.value || "0");
-      const paymentMethod = paymentMethodInput.value;
-
-      if (!guestName || !guestMobile || !roomPrice || !guestCount) {
-        showNotification("Please fill all required fields", "error");
-        return;
-      }
-
-      // Don't allow amount paid > 0 when payment method is "balance"
-      if (amountPaid > 0 && paymentMethod === "balance") {
-        showNotification(
-          'Cannot select "Pay Later" when amount is provided. Please select Cash or Online payment method.',
-          "error"
-        );
-        return;
-      }
-
-      // Disable submit button and show loading state
-      const submitBtn = e.target.querySelector("button[type=submit]");
-      if (!submitBtn) {
-        showNotification("Submit button not found", "error");
-        return;
-      }
-
-      const originalContent = submitBtn.innerHTML;
-      submitBtn.disabled = true;
-      submitBtn.innerHTML =
-        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
-
-      try {
-        const response = await fetch("/checkin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            room: roomNumber,
-            name: guestName,
-            mobile: guestMobile,
-            price: roomPrice,
-            guests: guestCount,
-            payment: paymentMethod,
-            amountPaid: amountPaid,
-            photoPath: uploadedPhotoUrl,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server responded with status: ${response.status}`);
-        }
-
-        const result = await response.json();
-        if (result.success) {
-          checkinModal.classList.remove("show");
-          await fetchData();
-          showNotification(result.message || "Check-in successful!", "success");
-        } else {
-          showNotification(result.message || "Error during check-in", "error");
-        }
-      } catch (error) {
-        console.error("Error during check-in:", error);
-        showNotification(`Error during check-in: ${error.message}`, "error");
-      } finally {
-        // Re-enable submit button
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = "Complete Check-in";
-      }
+    const response = await fetch("/upload_photo", {
+      method: "POST",
+      body: formData,
     });
-  } else {
-    debugLog("Check-in form not found");
+
+    if (!response.ok) {
+      throw new Error(`Server responded with status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    if (result.success) {
+      uploadedPhotoUrl = result.path;
+    } else {
+      showNotification(result.message || "Error uploading photo", "error");
+    }
+  } catch (error) {
+    console.error("Error uploading photo:", error);
+    showNotification(`Error uploading photo: ${error.message}`, "error");
   }
-});
+}
+
+function updateServiceTotalPrice() {
+  const priceInput = document.getElementById("service-price");
+  const quantityInput = document.getElementById("service-quantity");
+  const totalPriceElement = document.getElementById("service-total-price");
+
+  if (priceInput && quantityInput && totalPriceElement) {
+    const price = parseInt(priceInput.value) || 0;
+    const quantity = parseInt(quantityInput.value) || 1;
+    const totalPrice = price * quantity;
+
+    totalPriceElement.textContent = `₹${totalPrice}`;
+  }
+}
+
+// Room pricing configuration
+const roomPricing = {
+  // Function to calculate price based on room number and guest count
+  calculatePrice: function (roomNumber, guestCount) {
+    roomNumber = String(roomNumber);
+    guestCount = parseInt(guestCount);
+
+    // First floor regular rooms (3-5, 13-20)
+    if (
+      (roomNumber >= 3 && roomNumber <= 5) ||
+      (roomNumber >= 13 && roomNumber <= 20)
+    ) {
+      return 250; // Fixed price for 1 guest
+    }
+
+    // First floor rooms 23-27
+    else if (roomNumber >= 23 && roomNumber <= 27) {
+      if (guestCount === 1) return 300;
+      else return 500; // For 2 or more guests
+    }
+
+    // Second floor premium rooms (non-AC: 200, 201, 206, 207)
+    else if (["200", "201", "206", "207"].includes(roomNumber)) {
+      if (guestCount === 1) return 800;
+      else return 1000 + Math.max(0, guestCount - 2) * 300; // 1000 for 2 guests, +300 for each extra
+    }
+
+    // Second floor premium AC rooms (202-205)
+    else if (roomNumber >= 202 && roomNumber <= 205) {
+      return 1600 + Math.max(0, guestCount - 2) * 300; // 1600 for 2 guests, +300 for each extra
+    }
+
+    // Second floor rooms (208-211, 220-227, 215)
+    else if (
+      (roomNumber >= 208 && roomNumber <= 211) ||
+      (roomNumber >= 220 && roomNumber <= 227) ||
+      roomNumber === "215"
+    ) {
+      if (guestCount === 1) return 450;
+      else return 700 + Math.max(0, guestCount - 2) * 300; // 700 for 2 guests, +300 for each extra
+    }
+
+    // Second floor rooms (212-214, 216-219)
+    else if (
+      (roomNumber >= 212 && roomNumber <= 214) ||
+      (roomNumber >= 216 && roomNumber <= 219)
+    ) {
+      if (guestCount === 1) return 450;
+      else return 700; // Fixed price for 2 or more guests
+    }
+
+    // Default fallback
+    return 500;
+  },
+
+  // Function to get room category
+  getRoomCategory: function (roomNumber) {
+    roomNumber = String(roomNumber);
+
+    // First floor rooms (1-27) - Non-attach category
+    if (roomNumber >= 1 && roomNumber <= 27) {
+      return {
+        category: "non-attach",
+        label: "Non-Attach Room",
+        analytics: {
+          type: "non-attach",
+        },
+      };
+    }
+
+    // Premium AC rooms (202-205)
+    else if (roomNumber >= 202 && roomNumber <= 205) {
+      return {
+        category: "premium-ac",
+        label: "Premium AC Room",
+        analytics: {
+          type: "premium",
+          isAC: true,
+        },
+      };
+    }
+
+    // Premium rooms (200, 201, 206, 207)
+    else if (["200", "201", "206", "207"].includes(roomNumber)) {
+      return {
+        category: "premium",
+        label: "Premium Room",
+        analytics: {
+          type: "premium",
+          isAC: false,
+        },
+      };
+    }
+
+    // Single rooms (212-215, 216-219)
+    else if (
+      (roomNumber >= 212 && roomNumber <= 215) ||
+      (roomNumber >= 216 && roomNumber <= 219)
+    ) {
+      return {
+        category: "single",
+        label: "Single Room",
+        analytics: {
+          type: "single",
+        },
+      };
+    }
+
+    // Regular second floor rooms
+    else if (roomNumber >= 208 && roomNumber <= 227) {
+      return {
+        category: "regular",
+        label: "Regular Room",
+        analytics: {
+          type: "regular",
+        },
+      };
+    }
+
+    // Default fallback
+    return {
+      category: "regular",
+      label: "Regular Room",
+      analytics: {
+        type: "regular",
+      },
+    };
+  },
+};
+
+// Initialize enhanced check-in form functionality
+function initEnhancedCheckinForm() {
+  const roomDropdown = document.getElementById("checkin-room-dropdown");
+  const guestCountInput = document.getElementById("guest-count");
+  const roomPriceInput = document.getElementById("room-price");
+  const amountPaidInput = document.getElementById("amount-paid");
+  const roomCategoryIndicator = document.getElementById("room-category");
+  const acToggleContainer = document.getElementById("ac-toggle-container");
+  const acToggle = document.getElementById("ac-toggle");
+
+  // Handle room selection change
+  if (roomDropdown) {
+    roomDropdown.addEventListener("change", updateRoomInfo);
+  }
+
+  // Handle guest count change
+  if (guestCountInput) {
+    guestCountInput.addEventListener("change", updateRoomPrice);
+    guestCountInput.addEventListener("input", updateRoomPrice);
+  }
+
+  // Handle AC toggle change
+  if (acToggle) {
+    acToggle.addEventListener("change", updateRoomPrice);
+  }
+
+  // Update price when the form is first loaded
+  function updateRoomInfo() {
+    const selectedRoom = roomDropdown.value;
+
+    // Update room category indicator
+    if (roomCategoryIndicator && selectedRoom) {
+      const category = roomPricing.getRoomCategory(selectedRoom);
+      roomCategoryIndicator.textContent = category.label;
+      roomCategoryIndicator.className =
+        "room-category-indicator room-category-" + category.category;
+
+      // Show AC toggle only for rooms 202-205 (premium AC rooms)
+      if (acToggleContainer) {
+        if (selectedRoom >= 202 && selectedRoom <= 205) {
+          acToggleContainer.style.display = "block";
+          if (acToggle) {
+            acToggle.checked = false; // AC toggle OFF by default
+
+            // Update the room category label to "Premium Room" when AC is off by default
+            if (roomCategoryIndicator) {
+              roomCategoryIndicator.textContent = "Premium Room";
+              roomCategoryIndicator.className =
+                "room-category-indicator room-category-premium";
+            }
+          }
+        } else {
+          acToggleContainer.style.display = "none";
+        }
+      }
+
+      // Store category data for analytics
+      if (roomDropdown.dataset) {
+        roomDropdown.dataset.roomCategory = category.analytics.type;
+        roomDropdown.dataset.isAc = category.analytics.isAC || false;
+      }
+
+      // Set default guest count based on room number
+      if (guestCountInput) {
+        // Set default to 2 guests for specified rooms
+        if (
+          (selectedRoom >= 200 && selectedRoom <= 211) ||
+          selectedRoom == 215 ||
+          (selectedRoom >= 220 && selectedRoom <= 227) ||
+          (selectedRoom >= 23 && selectedRoom <= 27)
+        ) {
+          guestCountInput.value = 2;
+        } else {
+          // Default to 1 guest for other rooms
+          guestCountInput.value = 1;
+        }
+      }
+    }
+
+    updateRoomPrice();
+  }
+
+  // Calculate and update room price based on room number and guest count
+  function updateRoomPrice() {
+    if (!roomDropdown || !guestCountInput || !roomPriceInput) return;
+
+    const selectedRoom = roomDropdown.value;
+    const guestCount = parseInt(guestCountInput.value) || 1;
+
+    if (selectedRoom) {
+      let price = roomPricing.calculatePrice(selectedRoom, guestCount);
+
+      // For premium AC rooms (202-205)
+      if (selectedRoom >= 202 && selectedRoom <= 205) {
+        // Apply price adjustment if AC is toggled off
+        if (acToggle && !acToggle.checked) {
+          // Reduce price by 600 if AC is turned off
+          price -= 600;
+
+          // Update the room category label to "Premium Room" when AC is off
+          if (roomCategoryIndicator) {
+            roomCategoryIndicator.textContent = "Premium Room";
+            roomCategoryIndicator.className =
+              "room-category-indicator room-category-premium";
+          }
+        } else if (acToggle && acToggle.checked) {
+          // Ensure the label is "Premium AC Room" when AC is on
+          if (roomCategoryIndicator) {
+            roomCategoryIndicator.textContent = "Premium AC Room";
+            roomCategoryIndicator.className =
+              "room-category-indicator room-category-premium-ac";
+          }
+        }
+      }
+
+      roomPriceInput.value = price;
+
+      // Also update amount paid to match the room price by default
+      if (amountPaidInput) {
+        amountPaidInput.value = price;
+      }
+    }
+  }
+
+  // Call this when the form is first opened
+  document.addEventListener("checkinModalOpened", updateRoomInfo);
+}
+
+// Function to trigger when check-in modal is shown
+function showEnhancedCheckinModal(roomNumber) {
+  if (!checkinModal) {
+    console.log("Check-in modal not found");
+    return;
+  }
+
+  // Populate room dropdown first
+  populateRoomDropdown().then(() => {
+    // Set the selected room number
+    const dropdown = document.getElementById("checkin-room-dropdown");
+    if (dropdown) {
+      // Find the option with the matching room number
+      const option = Array.from(dropdown.options).find(
+        (opt) => opt.value === roomNumber
+      );
+
+      if (option) {
+        dropdown.value = roomNumber;
+      } else if (dropdown.options.length > 0) {
+        // If the room isn't in the list (might be occupied), select the first available
+        dropdown.selectedIndex = 0;
+      }
+    }
+
+    // Reset form fields
+    const checkinForm = document.getElementById("checkin-form");
+    if (checkinForm) {
+      checkinForm.reset();
+    }
+
+    // Reset photo elements
+    const photoPreviewContainer = document.getElementById(
+      "photo-preview-container"
+    );
+    if (photoPreviewContainer) {
+      photoPreviewContainer.style.display = "none";
+    }
+
+    const cameraContainer = document.getElementById("camera-container");
+    if (cameraContainer) {
+      cameraContainer.style.display = "none";
+    }
+
+    // Reset captured photo data
+    capturedPhotoData = null;
+    uploadedPhotoUrl = null;
+
+    // Make sure cash is the default active payment method
+    document.querySelectorAll(".payment-btn").forEach((btn) => {
+      btn.classList.remove("active");
+    });
+
+    const cashBtn = document.querySelector('.payment-btn[data-payment="cash"]');
+    if (cashBtn) {
+      cashBtn.classList.add("active");
+    }
+
+    const paymentMethodInput = document.getElementById("payment-method");
+    if (paymentMethodInput) {
+      paymentMethodInput.value = "cash";
+    }
+
+    // Update room info based on selected room
+    const event = new Event("checkinModalOpened");
+    document.dispatchEvent(event);
+
+    // Show the modal
+    checkinModal.classList.add("show");
+  });
+}
+
+// Initialize collapsible stats functionality
+function initCollapsibleStats() {
+  const statsToggle = document.getElementById("stats-toggle");
+  const statsContainer = document.getElementById("stats-container");
+
+  if (!statsToggle || !statsContainer) {
+    console.log("Stats toggle elements not found");
+    return;
+  }
+
+  // Add click event to toggle stats visibility
+  statsToggle.addEventListener("click", function () {
+    // Toggle active class on the button
+    this.classList.toggle("active");
+
+    // Toggle hidden class on the stats container
+    statsContainer.classList.toggle("hidden");
+
+    // Save state to localStorage
+    const isVisible = !statsContainer.classList.contains("hidden");
+    localStorage.setItem("statsVisible", isVisible ? "true" : "false");
+  });
+}
+
+// Function to restore stats visibility from localStorage
+function restoreStatsVisibility() {
+  const statsToggle = document.getElementById("stats-toggle");
+  const statsContainer = document.getElementById("stats-container");
+
+  if (!statsToggle || !statsContainer) return;
+
+  // Get saved preference (default to hidden if not set)
+  const isVisible = localStorage.getItem("statsVisible") === "true";
+
+  if (isVisible) {
+    statsToggle.classList.add("active");
+    statsContainer.classList.remove("hidden");
+  } else {
+    statsToggle.classList.remove("active");
+    statsContainer.classList.add("hidden");
+  }
+}
+
+// Update stats toggle badge to show important information
+function updateStatsToggleBadge() {
+  const statsToggle = document.getElementById("stats-toggle");
+  const statsContainer = document.getElementById("stats-container");
+
+  if (
+    !statsToggle ||
+    !statsContainer ||
+    !statsContainer.classList.contains("hidden")
+  ) {
+    return; // Only add badge when stats are hidden
+  }
+
+  let renewalsDue = 0;
+
+  // Count rooms due for renewal
+  Object.values(rooms).forEach((room) => {
+    if (room.status === "occupied") {
+      const renewalStatus = getRoomRenewalStatus(room);
+      if (renewalStatus.canRenew) {
+        renewalsDue++;
+      }
+    }
+  });
+}
+
+function displayDailyStatistics() {
+  const today = new Date().toISOString().split("T")[0];
+  const todayCount = dailyCounters[today] || 0;
+
+  console.log(`Today's fresh check-ins: ${todayCount}`);
+
+  // You can add this to your dashboard if needed
+  const statsElement = document.getElementById("daily-checkin-count");
+  if (statsElement) {
+    statsElement.textContent = todayCount;
+  }
+}
 
 // Report password protection logic
 const REPORT_PASSWORD = "admin123"; // You can change this to any password you want
@@ -3652,7 +2764,8 @@ function handleReportsTabAccess() {
   // Show password modal
   const passwordModal = document.getElementById("password-modal");
   if (!passwordModal) {
-    debugLog("Password modal not found");
+    debugLog("Password modal not found, creating one...");
+    createPasswordModal();
     return;
   }
 
@@ -3672,29 +2785,157 @@ function handleReportsTabAccess() {
   }
 }
 
+// Create password modal if it doesn't exist
+function createPasswordModal() {
+  const modalHtml = `
+    <div class="modal-backdrop" id="password-modal">
+      <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+          <h2>Reports Access</h2>
+          <button class="close-btn" id="password-close-btn" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="report-password">Enter Password:</label>
+            <input 
+              type="password" 
+              class="form-control" 
+              id="report-password" 
+              placeholder="Password"
+              autocomplete="off"
+            />
+            <div id="password-error" style="color: var(--danger); margin-top: 0.5rem; display: none;">
+              Incorrect password. Please try again.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="action-btn btn-secondary" id="password-cancel-btn">
+            Cancel
+          </button>
+          <button type="button" class="action-btn btn-primary" id="password-submit-btn">
+            Submit
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Add modal to document body
+  document.body.insertAdjacentHTML("beforeend", modalHtml);
+
+  // Show the modal immediately
+  const passwordModal = document.getElementById("password-modal");
+  if (passwordModal) {
+    passwordModal.classList.add("show");
+    const passwordInput = document.getElementById("report-password");
+    if (passwordInput) {
+      setTimeout(() => passwordInput.focus(), 100);
+    }
+  }
+}
+
+// Use event delegation for password modal (more reliable for dynamic content)
+document.addEventListener("click", function (e) {
+  // Handle password submit button
+  if (e.target && e.target.id === "password-submit-btn") {
+    console.log("Password submit clicked via delegation");
+    e.preventDefault();
+    e.stopPropagation();
+    verifyReportPassword();
+    return;
+  }
+
+  // Handle password cancel button
+  if (e.target && e.target.id === "password-cancel-btn") {
+    console.log("Password cancel clicked via delegation");
+    e.preventDefault();
+    e.stopPropagation();
+    const passwordModal = document.getElementById("password-modal");
+    if (passwordModal) {
+      passwordModal.classList.remove("show");
+    }
+    return;
+  }
+
+  // Handle password close button
+  if (e.target && e.target.id === "password-close-btn") {
+    console.log("Password close clicked via delegation");
+    e.preventDefault();
+    e.stopPropagation();
+    const passwordModal = document.getElementById("password-modal");
+    if (passwordModal) {
+      passwordModal.classList.remove("show");
+    }
+    return;
+  }
+
+  // Handle click outside modal
+  if (e.target && e.target.id === "password-modal") {
+    console.log("Clicked outside password modal");
+    const passwordModal = document.getElementById("password-modal");
+    if (passwordModal) {
+      passwordModal.classList.remove("show");
+    }
+    return;
+  }
+});
+
+// Handle Enter key in password field using event delegation
+document.addEventListener("keyup", function (e) {
+  if (e.target && e.target.id === "report-password" && e.key === "Enter") {
+    console.log("Enter key pressed in password field");
+    verifyReportPassword();
+  }
+});
+
+// Simplified setup function (no longer needed but keeping for compatibility)
+function setupPasswordModalListeners() {
+  console.log("Event delegation already set up globally");
+}
+
 // Function to verify password
 function verifyReportPassword() {
+  console.log("verifyReportPassword called");
+
   const passwordInput = document.getElementById("report-password");
   const passwordError = document.getElementById("password-error");
   const passwordModal = document.getElementById("password-modal");
 
+  console.log("Elements found:", {
+    passwordInput: !!passwordInput,
+    passwordError: !!passwordError,
+    passwordModal: !!passwordModal,
+  });
+
   if (!passwordInput || !passwordError || !passwordModal) {
     debugLog("Password elements not found");
+    console.error("Missing password modal elements");
     return;
   }
 
   const password = passwordInput.value;
+  console.log("Password entered:", password ? "***" : "empty");
 
   if (password === REPORT_PASSWORD) {
     // Password correct
+    console.log("Password correct");
     reportPasswordVerified = true;
     passwordModal.classList.remove("show");
     showReportsTab();
+    showNotification("Access granted to reports section", "success");
   } else {
     // Password incorrect
+    console.log("Password incorrect");
     passwordError.style.display = "block";
     passwordInput.value = "";
     passwordInput.focus();
+
+    // Add shake animation to input
+    passwordInput.style.animation = "shake 0.5s";
+    setTimeout(() => {
+      passwordInput.style.animation = "";
+    }, 500);
   }
 }
 
@@ -3722,51 +2963,6 @@ function showReportsTab() {
     reportsNavItem.classList.add("active");
   }
 }
-
-// Setup event listeners for password modal
-document.addEventListener("DOMContentLoaded", function () {
-  // Override reports tab click handler
-  const reportsNavItem = document.querySelector(
-    '.nav-item[data-tab="reports"]'
-  );
-  if (reportsNavItem) {
-    reportsNavItem.addEventListener(
-      "click",
-      function (e) {
-        e.stopPropagation(); // Prevent default tab click behavior
-        handleReportsTabAccess();
-      },
-      true
-    ); // Use capture to intercept event before other handlers
-  }
-
-  // Password submit button
-  const passwordSubmitBtn = document.getElementById("password-submit-btn");
-  if (passwordSubmitBtn) {
-    passwordSubmitBtn.addEventListener("click", verifyReportPassword);
-  }
-
-  // Password cancel button
-  const passwordCancelBtn = document.getElementById("password-cancel-btn");
-  if (passwordCancelBtn) {
-    passwordCancelBtn.addEventListener("click", function () {
-      const passwordModal = document.getElementById("password-modal");
-      if (passwordModal) {
-        passwordModal.classList.remove("show");
-      }
-    });
-  }
-
-  // Enter key in password field
-  const passwordInput = document.getElementById("report-password");
-  if (passwordInput) {
-    passwordInput.addEventListener("keyup", function (e) {
-      if (e.key === "Enter") {
-        verifyReportPassword();
-      }
-    });
-  }
-});
 
 // Add discount field to checkout modal for existing stays
 function addDiscountToCheckoutModal() {
@@ -3975,10 +3171,712 @@ function initializeDiscountFeature() {
   };
 }
 
+// Global checkout handling variables
+let checkoutHandlersInitialized = false;
+let checkoutInProgress = false;
+
+// This function will be called when the DOM is fully loaded
+function setupCheckoutConfirmation() {
+  if (checkoutHandlersInitialized) {
+    console.log("Checkout handlers already initialized, skipping setup");
+    return;
+  }
+
+  const confirmCheckoutBtn = document.getElementById("confirm-checkout-btn");
+  if (!confirmCheckoutBtn) {
+    console.error("Checkout button not found!");
+    return;
+  }
+
+  // Add the event listener to the checkout button
+  confirmCheckoutBtn.addEventListener("click", function (event) {
+    event.preventDefault();
+
+    // Prevent multiple calls
+    if (checkoutInProgress) {
+      console.log("Checkout already in progress, ignoring click");
+      return;
+    }
+
+    const roomNumberElement = document.getElementById("checkout-room-number");
+    const guestNameElement = document.getElementById("checkout-guest-name");
+
+    if (!roomNumberElement) {
+      showNotification("Room number element not found", "error");
+      console.error("Room number element not found");
+      return;
+    }
+
+    const roomNumber = roomNumberElement.textContent;
+    const guestName = guestNameElement
+      ? guestNameElement.textContent
+      : "Unknown";
+    const balance = rooms[roomNumber].balance;
+
+    // If balance is positive, show warning and don't proceed
+    if (balance > 0) {
+      console.log("Checkout blocked - positive balance");
+      showNotification("Please clear the balance before checkout", "error");
+      return;
+    }
+
+    // If balance is negative, show warning about pending refund and don't proceed
+    if (balance < 0) {
+      return;
+    }
+
+    // Set the room and guest name in the confirmation modal
+    const confirmRoomElement = document.getElementById("confirm-checkout-room");
+    const confirmGuestElement = document.getElementById(
+      "confirm-checkout-guest"
+    );
+
+    if (confirmRoomElement) confirmRoomElement.textContent = roomNumber;
+    if (confirmGuestElement) confirmGuestElement.textContent = guestName;
+
+    // Show the confirmation modal
+    const checkoutConfirmModal = document.getElementById(
+      "checkout-confirm-modal"
+    );
+    if (checkoutConfirmModal) {
+      checkoutConfirmModal.classList.add("show");
+      console.log("Confirmation modal displayed");
+    } else {
+      console.error("Confirmation modal element not found");
+      showNotification("Error: Confirmation modal not found", "error");
+    }
+  });
+
+  // Handle the proceed button in the confirmation modal
+  const proceedCheckoutBtn = document.getElementById("proceed-checkout-btn");
+  if (proceedCheckoutBtn) {
+    proceedCheckoutBtn.addEventListener("click", async function () {
+      console.log("Proceed checkout clicked");
+
+      // Prevent multiple calls
+      if (checkoutInProgress) {
+        console.log("Checkout already in progress, ignoring proceed click");
+        return;
+      }
+
+      checkoutInProgress = true;
+
+      // Disable button and show loading state
+      this.disabled = true;
+      this.innerHTML =
+        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
+
+      const roomNumberElement = document.getElementById("checkout-room-number");
+      if (!roomNumberElement) {
+        showNotification("Room number element not found", "error");
+        console.error("Room number element not found during checkout");
+        checkoutInProgress = false;
+        this.disabled = false;
+        this.innerHTML = "Yes, Checkout";
+        return;
+      }
+
+      const roomNumber = roomNumberElement.textContent;
+      const balance = rooms[roomNumber].balance;
+
+      // Block checkout if there's still a positive balance
+      if (balance > 0) {
+        console.log("Checkout blocked in proceed step - positive balance");
+        showNotification("Please clear the balance before checkout", "error");
+        checkoutInProgress = false;
+        this.disabled = false;
+        this.innerHTML = "Yes, Checkout";
+
+        // Close the confirmation modal
+        const checkoutConfirmModal = document.getElementById(
+          "checkout-confirm-modal"
+        );
+        if (checkoutConfirmModal) {
+          checkoutConfirmModal.classList.remove("show");
+        }
+        return;
+      }
+
+      // Block checkout if there's a pending refund
+      if (balance < 0) {
+        checkoutInProgress = false;
+        this.disabled = false;
+        this.innerHTML = "Yes, Checkout";
+
+        // Close the confirmation modal
+        const checkoutConfirmModal = document.getElementById(
+          "checkout-confirm-modal"
+        );
+        if (checkoutConfirmModal) {
+          checkoutConfirmModal.classList.remove("show");
+        }
+        return;
+      }
+
+      // Only proceed if balance is exactly 0
+      try {
+        console.log("Sending checkout request to server");
+
+        const response = await fetch("/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            room: roomNumber,
+            final_checkout: true,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server responded with status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (result.success) {
+          console.log("Checkout successful");
+
+          // Close both modals
+          const checkoutConfirmModal = document.getElementById(
+            "checkout-confirm-modal"
+          );
+          if (checkoutConfirmModal) {
+            checkoutConfirmModal.classList.remove("show");
+          }
+
+          const checkoutModal = document.getElementById("checkout-modal");
+          if (checkoutModal) {
+            checkoutModal.classList.remove("show");
+          }
+
+          // Refresh data to get updated logs
+          await fetchData();
+
+          showNotification(result.message || "Checkout successful!", "success");
+        } else {
+          console.error("Checkout failed:", result.message);
+          showNotification(result.message || "Error during checkout", "error");
+        }
+      } catch (error) {
+        console.error("Error during checkout:", error);
+        showNotification(`Error during checkout: ${error.message}`, "error");
+      } finally {
+        // Always reset the checkout state
+        checkoutInProgress = false;
+
+        // Re-enable button
+        this.disabled = false;
+        this.innerHTML = "Yes, Checkout";
+      }
+    });
+  } else {
+    console.error("Proceed checkout button not found");
+  }
+
+  // Handle cancel and close buttons
+  const cancelConfirmBtn = document.getElementById(
+    "cancel-confirm-checkout-btn"
+  );
+  if (cancelConfirmBtn) {
+    cancelConfirmBtn.addEventListener("click", function () {
+      console.log("Cancel confirmation clicked");
+      const checkoutConfirmModal = document.getElementById(
+        "checkout-confirm-modal"
+      );
+      if (checkoutConfirmModal) {
+        checkoutConfirmModal.classList.remove("show");
+      }
+      checkoutInProgress = false; // Reset flag
+    });
+  }
+
+  const confirmModalCloseBtn = document.querySelector(
+    "#checkout-confirm-modal .close-btn"
+  );
+  if (confirmModalCloseBtn) {
+    confirmModalCloseBtn.addEventListener("click", function () {
+      console.log("Close confirmation modal clicked");
+      const checkoutConfirmModal = document.getElementById(
+        "checkout-confirm-modal"
+      );
+      if (checkoutConfirmModal) {
+        checkoutConfirmModal.classList.remove("show");
+      }
+      checkoutInProgress = false; // Reset flag
+    });
+  }
+
+  checkoutHandlersInitialized = true;
+}
+
+// Event Listeners
 document.addEventListener("DOMContentLoaded", function () {
-  // Call this after the page is fully loaded
+  debugLog("DOM loaded, initializing...");
+
+  // Check for key elements
+  if (!roomsGrid) debugLog("WARNING: roomsGrid element missing");
+  if (!checkinModal) debugLog("WARNING: checkinModal element missing");
+  if (!checkoutModal) debugLog("WARNING: checkoutModal element missing");
+  if (!serviceForm) debugLog("WARNING: serviceForm element missing");
+
+  // Initialize camera functionality
+  initCamera();
+
+  // Initialize service buttons
+  initServiceButtons();
+
+  // Fetch initial data
+  fetchData();
+
+  // Initialize the stats toggle functionality
+  initCollapsibleStats();
+
+  // Call function to update stats visibility from localStorage
+  restoreStatsVisibility();
+
+  // Initialize enhanced check-in form
+  initEnhancedCheckinForm();
+
+  // Override the original showCheckinModal function
+  window.showCheckinModal = showEnhancedCheckinModal;
+
+  // Setup checkout confirmation
+  setTimeout(setupCheckoutConfirmation, 500);
+
+  // Initialize discount functionality
   setTimeout(initializeDiscountFeature, 1000);
+
+  // Initialize bookings if available
   if (typeof initBookings === "function") {
     initBookings();
   }
+
+  // Bottom navigation
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const tabName = item.dataset.tab;
+      debugLog(`Tab clicked: ${tabName}`);
+
+      // Special handling for reports tab
+      if (tabName === "reports") {
+        handleReportsTabAccess();
+        return;
+      }
+
+      // Update nav items
+      document.querySelectorAll(".nav-item").forEach((navItem) => {
+        navItem.classList.remove("active");
+      });
+      item.classList.add("active");
+
+      // Update tabs content
+      document.querySelectorAll(".tab-content").forEach((content) => {
+        content.classList.add("hidden");
+      });
+
+      const tabContent = document.getElementById(`${tabName}-tab`);
+      if (tabContent) {
+        tabContent.classList.remove("hidden");
+      } else {
+        debugLog(`Tab content for ${tabName} not found`);
+      }
+    });
+  });
+
+  // Filters
+  document.querySelectorAll(".filter-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll(".filter-btn")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter;
+      debugLog(`Filter changed to: ${currentFilter}`);
+      renderRooms();
+    });
+  });
+
+  // Floor filters
+  document.querySelectorAll(".floor-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document
+        .querySelectorAll(".floor-btn")
+        .forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFloor = btn.dataset.floor;
+      debugLog(`Floor filter changed to: ${currentFloor}`);
+      renderRooms();
+    });
+  });
+
+  // Search functionality
+  if (roomSearch) {
+    roomSearch.addEventListener("input", (e) => {
+      searchTerm = e.target.value.toLowerCase();
+      renderRooms();
+    });
+  }
+
+  // Refresh button
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      refreshBtn.innerHTML =
+        '<span class="loader" style="width: 20px; height: 20px;"></span>';
+      fetchData().then(() => {
+        setTimeout(() => {
+          refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+        }, 500);
+      });
+    });
+  }
+
+  // Handle payment method selection for check-in
+  document.querySelectorAll(".payment-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (
+        btn.parentElement &&
+        btn.parentElement.classList.contains("payment-options")
+      ) {
+        const paymentOptions = btn.parentElement;
+        paymentOptions
+          .querySelectorAll(".payment-btn")
+          .forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+
+        if (btn.dataset.payment) {
+          activePaymentMethod = btn.dataset.payment;
+          const paymentMethodInput = document.getElementById("payment-method");
+          if (paymentMethodInput) {
+            paymentMethodInput.value = activePaymentMethod;
+          }
+        }
+      }
+    });
+  });
+
+  // Check-in form validation and submission
+  const checkinForm = document.getElementById("checkin-form");
+  if (checkinForm) {
+    checkinForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      // Get room number from dropdown or fallback to span
+      let roomNumber = "";
+      const roomDropdown = document.getElementById("checkin-room-dropdown");
+      if (roomDropdown && roomDropdown.value) {
+        roomNumber = roomDropdown.value;
+      } else {
+        const roomNumberElement = document.getElementById(
+          "checkin-room-number"
+        );
+        if (roomNumberElement) {
+          roomNumber = roomNumberElement.textContent;
+        }
+      }
+
+      if (!roomNumber) {
+        showNotification("Please select a room number", "error");
+        return;
+      }
+
+      // Get form values with null checks
+      const guestNameInput = document.getElementById("guest-name");
+      const guestMobileInput = document.getElementById("guest-mobile");
+      const roomPriceInput = document.getElementById("room-price");
+      const guestCountInput = document.getElementById("guest-count");
+      const amountPaidInput = document.getElementById("amount-paid");
+      const paymentMethodInput = document.getElementById("payment-method");
+
+      // Get AC toggle state for AC rooms
+      const acToggle = document.getElementById("ac-toggle");
+      const isAC = acToggle && acToggle.checked;
+
+      if (
+        !guestNameInput ||
+        !guestMobileInput ||
+        !roomPriceInput ||
+        !guestCountInput ||
+        !amountPaidInput ||
+        !paymentMethodInput
+      ) {
+        showNotification("Required form fields are missing", "error");
+        return;
+      }
+
+      const guestName = guestNameInput.value;
+      const guestMobile = guestMobileInput.value;
+      const roomPrice = roomPriceInput.value;
+      const guestCount = guestCountInput.value;
+      const amountPaid = parseInt(amountPaidInput.value || "0");
+      const paymentMethod = paymentMethodInput.value;
+
+      if (!guestName || !guestMobile || !roomPrice || !guestCount) {
+        showNotification("Please fill all required fields", "error");
+        return;
+      }
+
+      // Don't allow amount paid > 0 when payment method is "balance"
+      if (amountPaid > 0 && paymentMethod === "balance") {
+        showNotification(
+          'Cannot select "Pay Later" when amount is provided. Please select Cash or Online payment method.',
+          "error"
+        );
+        return;
+      }
+
+      // Disable submit button and show loading state
+      const submitBtn = e.target.querySelector("button[type=submit]");
+      if (!submitBtn) {
+        showNotification("Submit button not found", "error");
+        return;
+      }
+
+      const originalContent = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML =
+        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
+
+      try {
+        const response = await fetch("/checkin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            room: roomNumber,
+            name: guestName,
+            mobile: guestMobile,
+            price: roomPrice,
+            guests: guestCount,
+            payment: paymentMethod,
+            amountPaid: amountPaid,
+            photoPath: uploadedPhotoUrl,
+            isAC: isAC,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server responded with status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        if (result.success) {
+          checkinModal.classList.remove("show");
+          await fetchData();
+
+          // Show success message with serial number if available
+          let message = result.message || "Check-in successful!";
+          if (result.serial_number) {
+            message += ` (Serial #${result.serial_number})`;
+          }
+          showNotification(message, "success");
+        } else {
+          showNotification(result.message || "Error during check-in", "error");
+        }
+      } catch (error) {
+        console.error("Error during check-in:", error);
+        showNotification(`Error during check-in: ${error.message}`, "error");
+      } finally {
+        // Re-enable submit button
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = "Complete Check-in";
+      }
+    });
+  } else {
+    debugLog("Check-in form not found");
+  }
+
+  // Cancel checkout
+  const cancelCheckoutBtn = document.getElementById("cancel-checkout-btn");
+  if (cancelCheckoutBtn) {
+    cancelCheckoutBtn.addEventListener("click", () => {
+      checkoutModal.classList.remove("show");
+    });
+  }
+
+  // Edit check-in time button
+  const editCheckinTimeBtn = document.getElementById("edit-checkin-time");
+  if (editCheckinTimeBtn) {
+    editCheckinTimeBtn.addEventListener("click", () => {
+      const roomNumber = document.getElementById(
+        "checkout-room-number"
+      )?.textContent;
+      const currentTime = document.getElementById(
+        "checkout-checkin-time"
+      )?.textContent;
+      if (roomNumber) {
+        showEditTimeModal(roomNumber, currentTime);
+      }
+    });
+  }
+
+  // Apply report filter
+  const applyReportFilterBtn = document.getElementById("apply-report-filter");
+  if (applyReportFilterBtn) {
+    applyReportFilterBtn.addEventListener("click", generateReport);
+  }
+
+  // Renew all button
+  const renewAllBtn = document.getElementById("renew-all-btn");
+  if (renewAllBtn) {
+    renewAllBtn.addEventListener("click", async function () {
+      const dueRoomElements = document.querySelectorAll(".renewal-item");
+      if (dueRoomElements.length === 0) return;
+
+      this.disabled = true;
+      this.innerHTML =
+        '<span class="loader" style="width: 20px; height: 20px;"></span> Processing...';
+
+      const dueRooms = Array.from(dueRoomElements).map((el) => el.dataset.room);
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const room of dueRooms) {
+        try {
+          const roomElement = document.querySelector(
+            `.renewal-item[data-room="${room}"]`
+          );
+          if (!roomElement) continue;
+
+          const buttonElement = roomElement.querySelector(".renew-single-btn");
+          if (!buttonElement) continue;
+
+          // Skip already processed rooms
+          if (buttonElement.innerHTML === "Renewed" || buttonElement.disabled) {
+            continue;
+          }
+
+          // Update button UI
+          buttonElement.disabled = true;
+          buttonElement.innerHTML =
+            '<span class="loader" style="width: 10px; height: 10px;"></span>';
+
+          // Try to renew the room
+          const success = await triggerRentRenewal(room);
+
+          if (success) {
+            successCount++;
+            // Update UI to show this room is processed
+            roomElement.style.backgroundColor = "#e8f4e5";
+            buttonElement.innerHTML = "Renewed";
+          } else {
+            failCount++;
+            buttonElement.disabled = false;
+            buttonElement.innerHTML = "Retry";
+          }
+        } catch (error) {
+          console.error(`Error renewing room ${room}:`, error);
+          failCount++;
+        }
+      }
+
+      this.disabled = false;
+      this.innerHTML = "Renew All Due Rooms";
+
+      if (successCount > 0) {
+        showNotification(
+          `Successfully renewed ${successCount} room${
+            successCount !== 1 ? "s" : ""
+          }`,
+          "success"
+        );
+      }
+
+      if (failCount > 0) {
+        showNotification(
+          `Failed to renew ${failCount} room${failCount !== 1 ? "s" : ""}`,
+          "warning"
+        );
+      }
+
+      // Close modal if all rooms are successfully processed
+      if (failCount === 0) {
+        setTimeout(() => {
+          if (rentRenewalModal) {
+            rentRenewalModal.classList.remove("show");
+          }
+        }, 1500);
+      }
+    });
+  }
+
+  // Close modals
+  document.querySelectorAll(".close-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".modal-backdrop").forEach((modal) => {
+        modal.classList.remove("show");
+      });
+
+      // Stop camera stream if active
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStream = null;
+      }
+    });
+  });
+
+  // Quick action button toggle
+  const quickActionBtn = document.getElementById("quick-action-toggle");
+  const quickActionMenu = document.querySelector(".quick-action-menu");
+
+  if (quickActionBtn && quickActionMenu) {
+    quickActionBtn.addEventListener("click", function () {
+      quickActionMenu.classList.toggle("show");
+    });
+
+    // Close menu when clicking outside
+    document.addEventListener("click", function (event) {
+      if (!event.target.closest(".quick-actions-container")) {
+        quickActionMenu.classList.remove("show");
+      }
+    });
+  }
+
+  // Quick renewals button
+  const quickRenewBtn = document.getElementById("quick-renew-btn");
+  if (quickRenewBtn) {
+    quickRenewBtn.addEventListener("click", function () {
+      showRenewalModal();
+      if (quickActionMenu) {
+        quickActionMenu.classList.remove("show");
+      }
+    });
+  }
+
+  // Add Room form submission
+  const addRoomForm = document.getElementById("add-room-form");
+  if (addRoomForm) {
+    addRoomForm.addEventListener("submit", addRoom);
+  }
+
+  // Set default dates for report
+  const today = new Date().toISOString().split("T")[0];
+  if (document.getElementById("start-date")) {
+    document.getElementById("start-date").value = today;
+  }
+  if (document.getElementById("end-date")) {
+    document.getElementById("end-date").value = today;
+  }
+
+  // Setup event listeners for password modal - Try to setup existing modal first
+  const existingPasswordModal = document.getElementById("password-modal");
+  if (existingPasswordModal) {
+    setupPasswordModalListeners();
+  }
+
+  // Override reports tab click handler
+  const reportsNavItem = document.querySelector(
+    '.nav-item[data-tab="reports"]'
+  );
+  if (reportsNavItem) {
+    // Remove any existing listeners first
+    const newReportsNavItem = reportsNavItem.cloneNode(true);
+    reportsNavItem.parentNode.replaceChild(newReportsNavItem, reportsNavItem);
+
+    // Add the new listener
+    newReportsNavItem.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleReportsTabAccess();
+    });
+  }
+
+  debugLog("Initialization complete");
 });

@@ -1,0 +1,184 @@
+/* Add these styles to style.css */
+
+/* Pending Settlements styling */
+.settlement-item {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  margin-bottom: 1rem;
+  overflow: hidden;
+  border-left: 4px solid var(--warning);
+  transition: var(--transition);
+}
+
+.settlement-item:hover {
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.settlement-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.settlement-guest {
+  display: flex;
+  flex-direction: column;
+}
+
+.settlement-guest strong {
+  margin-bottom: 0.2rem;
+}
+
+.settlement-badges {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.settlement-details {
+  padding: 0.8rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.settlement-info {
+  font-size: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.settlement-info > div {
+  margin-bottom: 0.2rem;
+}
+
+.settlement-actions {
+  text-align: right;
+}
+
+.settlement-notes {
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: var(--gray);
+  background-color: #f9f9f9;
+  border-top: 1px solid #f0f0f0;
+}
+
+.settlement-paid-info {
+  font-size: 0.8rem;
+  color: var(--success);
+}
+
+.settlement-cancelled-info {
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
+.settlement-item[data-status="paid"] {
+  border-left-color: var(--success);
+}
+
+.settlement-item[data-status="cancelled"] {
+  border-left-color: var(--danger);
+  opacity: 0.8;
+}
+
+/* Badge indicators for settlement payment */
+.payment-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: white;
+}
+
+.payment-badge.cash {
+  background-color: #27ae60;
+}
+
+.payment-badge.online {
+  background-color: #2980b9;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .settlement-info {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .settlement-details {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .settlement-actions {
+    text-align: left;
+    margin-top: 0.8rem;
+    width: 100%;
+  }
+
+  .settlement-actions .action-btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 576px) {
+  .settlement-info {
+    grid-template-columns: 1fr;
+  }
+}
+/* Add these to settle-later.css */
+
+/* Styling for partial payments */
+.settlement-payments {
+  padding: 0.5rem 1rem;
+  background-color: #f5f9ff;
+  border-top: 1px solid #e0e0e0;
+}
+
+.settlement-payments-title {
+  font-size: 0.85rem;
+  font-weight: bold;
+  margin-bottom: 0.3rem;
+  color: var(--primary);
+}
+
+.settlement-payment-item {
+  font-size: 0.8rem;
+  margin-bottom: 0.2rem;
+}
+
+/* Styling for discounts */
+.settlement-discount {
+  padding: 0.5rem 1rem;
+  background-color: #f0fff5;
+  border-top: 1px solid #e0e0e0;
+}
+
+.settlement-discount-title {
+  font-size: 0.85rem;
+  font-weight: bold;
+  margin-bottom: 0.3rem;
+  color: var(--success);
+}
+
+.settlement-discount-info {
+  font-size: 0.8rem;
+}
+
+/* Status badge for partial payments */
+.settlement-item[data-status="partial"] {
+  border-left-color: var(--primary);
+}
+
+/* Form helper text */
+.form-helper {
+  font-size: 0.75rem;
+  color: var(--gray);
+  margin-top: 0.25rem;
+}

@@ -1990,3 +1990,331 @@ canvas {
 }
 
 /* Add this to the end of your existing CSS file */
+.form-section {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.form-section:last-child {
+  border-bottom: none;
+}
+
+.form-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 0.8rem;
+}
+
+.half-width {
+  flex: 1;
+  min-width: 0; /* Prevents flex items from overflowing */
+}
+
+.room-category-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.room-category-indicator {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: white;
+}
+
+/* Toggle Switch for AC */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background-color: #ccc;
+  border-radius: 34px;
+  transition: 0.4s;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.4s;
+  border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+  background-color: #6f42c1;
+}
+
+input:focus + .toggle-slider {
+  box-shadow: 0 0 1px #6f42c1;
+}
+
+input:checked + .toggle-slider:before {
+  transform: translateX(16px);
+}
+
+.toggle-label {
+  margin-left: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.room-category-regular {
+  background-color: #4361ee;
+}
+
+.room-category-non-attach {
+  background-color: #74c69d;
+}
+
+.room-category-premium {
+  background-color: #f6c23e;
+  color: #333;
+}
+
+.room-category-premium-ac {
+  background-color: #6f42c1;
+}
+
+.room-category-single {
+  background-color: #ff9e80;
+}
+
+.submit-btn {
+  margin-top: 1.5rem;
+}
+
+/* Mobile optimizations */
+@media (max-width: 576px) {
+  .modal-content {
+    padding: 1rem;
+    max-height: 95vh;
+  }
+
+  .form-label {
+    font-size: 0.85rem;
+  }
+
+  .form-control {
+    padding: 0.6rem;
+    font-size: 0.95rem;
+  }
+
+  .payment-btn {
+    padding: 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  .submit-btn {
+    padding: 0.8rem;
+  }
+
+  .photo-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .photo-input {
+    width: 100%;
+  }
+
+  .camera-btn {
+    width: 100%;
+    height: 36px;
+  }
+
+  .toggle-label {
+    font-size: 0.75rem;
+  }
+}
+.form-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 0.8rem;
+}
+
+.half-width {
+  flex: 1;
+  min-width: 0; /* Prevents flex items from overflowing */
+}
+.log-item.discount {
+  background-color: #e8f4e5;
+  border-left: 3px solid var(--success);
+}
+/* CSS for collapsible stats dashboard */
+
+.collapsible-section {
+  margin-bottom: 1.5rem;
+}
+
+.collapse-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
+  background-color: white;
+  border: none;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--dark);
+  text-align: left;
+  transition: var(--transition);
+}
+
+.collapse-toggle:hover {
+  background-color: #f8f9fa;
+  box-shadow: var(--shadow-md);
+}
+
+.collapse-toggle .toggle-icon {
+  transition: transform 0.3s ease;
+}
+
+.collapse-toggle.active .toggle-icon {
+  transform: rotate(180deg);
+}
+
+.collapsible-content {
+  transition: max-height 0.3s ease-out;
+  overflow: hidden;
+  max-height: 3000px; /* Large enough for your content */
+}
+
+.collapsible-content.hidden {
+  max-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+/* Adjust stats-container for collapsible behavior */
+.stats-container {
+  margin-top: 1rem; /* Add space between toggle and content */
+}
+
+/* Badge notification for important stats */
+.badge-notification {
+  display: inline-block;
+  background-color: var(--danger);
+  color: white;
+  border-radius: 50%;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  margin-left: 5px;
+}
+
+/* Animation for smooth collapse/expand */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.collapsible-content:not(.hidden) {
+  animation: fadeIn 0.3s ease-out;
+}
+/* Room number and AC/guest indicators */
+.room-number-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 0.2rem;
+  flex-wrap: nowrap;
+}
+
+.room-number {
+  font-size: 1.1rem;
+  font-weight: bold;
+  margin-bottom: 0.2rem;
+  flex: 1;
+  text-align: center;
+}
+
+.ac-indicator {
+  font-size: 0.9rem;
+  margin-right: 3px;
+  color: #1d97f5; /* Nice blue color for the snowflake */
+  flex-shrink: 0;
+}
+
+.ac-indicator-placeholder {
+  width: 1rem;
+  visibility: hidden;
+  flex-shrink: 0;
+}
+
+.guest-count-indicator {
+  font-size: 0.75rem;
+  font-weight: bold;
+  background-color: #889dff;
+  color: white;
+  border-radius: 8px;
+  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+/* Mobile adjustments */
+@media (max-width: 380px) {
+  .room-number-row {
+    margin-bottom: 0.1rem;
+  }
+
+  .room-number {
+    font-size: 0.95rem;
+  }
+
+  .ac-indicator {
+    font-size: 0.8rem;
+  }
+
+  .guest-count-indicator {
+    font-size: 0.7rem;
+    padding: 1px 4px;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 320px) {
+  .room-number {
+    font-size: 0.85rem;
+  }
+
+  .ac-indicator,
+  .guest-count-indicator i {
+    font-size: 0.75rem;
+  }
+}

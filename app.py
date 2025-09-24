@@ -4,498 +4,322 @@ import json
 import os
 import logging
 import uuid
+import firebase_admin
+from firebase_admin import credentials, firestore, storage
 from werkzeug.utils import secure_filename
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+import tempfile
+import pytz
+import base64
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]  # Only log to console on Render
+    handlers=[logging.FileHandler("lodge.log"), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
 app = Flask(__name__, static_folder='static')
 
-# Google API settings - DEFINE SCOPES BEFORE USING THEM
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-SPREADSHEET_ID = '1oQhNGbuzad2XC9kQwXu2CswaHlxLHhHKgngz1wA9iRo'  # Replace with yours
-DRIVE_FOLDER_ID = '1P4f1lx9w5ay-3Dw4JO3qzjGN8ysTvGt5'  # Replace with yours
+import os
+import json
+import base64
+from firebase_admin import credentials, firestore, storage
 
-# Try to get credentials from environment variable
+# Initialize Firebase Admin SDK
 try:
-    google_credentials = os.environ.get('GOOGLE_CREDENTIALS')
-    if google_credentials:
-        logger.info("Using Google credentials from environment variable")
-        credentials_info = json.loads(google_credentials)
-        credentials = service_account.Credentials.from_service_account_info(
-            credentials_info, scopes=SCOPES)
+    # Check if using environment variable for credentials (production)
+    if 'FIREBASE_CREDENTIALS' in os.environ:
+        # Decode base64 encoded credentials
+        cred_json = base64.b64decode(os.environ.get('FIREBASE_CREDENTIALS')).decode('utf-8')
+        cred_dict = json.loads(cred_json)
+        cred = credentials.Certificate(cred_dict)
+        
+        # Get storage bucket from environment
+        storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', 'your-project-id.appspot.com')
+        
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': storage_bucket
+        })
     else:
-        # Fall back to file if environment variable is not set
-        logger.info("Environment variable GOOGLE_CREDENTIALS not found, trying file")
-        SERVICE_ACCOUNT_FILE = 'lodge-service-account.json'
-        if os.path.exists(SERVICE_ACCOUNT_FILE):
-            credentials = service_account.Credentials.from_service_account_file(
-                SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        else:
-            logger.error(f"Service account file {SERVICE_ACCOUNT_FILE} not found")
-            credentials = None
+        # Local development - use service account file
+        cred = credentials.Certificate('service-account.json')  # Create this file for local development
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': 'your-project-id.appspot.com'  # Replace with your bucket
+        })
+    
+    # Get Firestore database and storage bucket
+    db = firestore.client()
+    bucket = storage.bucket()
+    
+    logger.info("Firebase initialized successfully")
 except Exception as e:
-    logger.error(f"Error loading Google credentials: {str(e)}")
-    credentials = None
+    logger.error(f"Error initializing Firebase: {str(e)}")
+    raise
 
-logger = logging.getLogger(__name__)
+# Initialize Indian Timezone for consistent timestamps
+IST = pytz.timezone('Asia/Kolkata')
 
-app = Flask(__name__, static_folder='static')
+# Define references for Firestore collections
+rooms_ref = db.collection('rooms')
+logs_ref = db.collection('logs')
+totals_ref = db.collection('totals')
+bookings_ref = db.collection('bookings')
+settings_ref = db.collection('settings')
+settlements_ref = db.collection('settlements')
+counters_ref = db.collection('daily_counters')  # NEW: For serial number tracking
+metadata_ref = db.collection('transaction_metadata')  # NEW: For transaction metadata
 
-# File upload settings
+# Upload folder for temporary storage during processing
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# ----- GOOGLE API CONFIGURATION -----
-# Path to your downloaded service account JSON key file
-SERVICE_ACCOUNT_FILE = 'lodge-service-account.json'
+# NEW: Helper functions for serial number management
+def get_next_serial_number(date_str):
+    """Get the next serial number for fresh check-ins on a given date"""
+    counter_doc = counters_ref.document(date_str).get()
+    
+    if counter_doc.exists:
+        current_count = counter_doc.to_dict().get('count', 0)
+        new_count = current_count + 1
+        counters_ref.document(date_str).update({'count': new_count})
+    else:
+        new_count = 1
+        counters_ref.document(date_str).set({'count': new_count})
+    
+    return new_count
 
-# Your Google Sheet ID (from the URL)
-SPREADSHEET_ID = '1oQhNGbuzad2XC9kQwXu2CswaHlxLHhHKgngz1wA9iRo'  # Replace with yours
+def store_transaction_metadata(room, date, serial_number, transaction_type="checkin"):
+    """Store metadata for a transaction"""
+    key = f"{date}_{room}"
+    metadata_ref.document(key).set({
+        'serial_number': serial_number,
+        'transaction_type': transaction_type,
+        'timestamp': datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    })
 
-# Your Google Drive folder ID where photos will be stored
-DRIVE_FOLDER_ID = '1P4f1lx9w5ay-3Dw4JO3qzjGN8ysTvGt5'  # Replace with yours
-
-# Scopes needed for API access
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 
-          'https://www.googleapis.com/auth/drive']
-
-# ----- GOOGLE API FUNCTIONS -----
-def get_google_services():
-    """Initialize and return Google Sheets and Drive services"""
+def cleanup_old_counters():
+    """Remove counters older than 30 days"""
     try:
-        credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-        sheets_service = build('sheets', 'v4', credentials=credentials)
-        drive_service = build('drive', 'v3', credentials=credentials)
-        return sheets_service, drive_service
+        cutoff_date = (datetime.now(IST) - timedelta(days=30)).strftime("%Y-%m-%d")
+        
+        # Clean daily counters
+        old_counters = counters_ref.where('__name__', '<', cutoff_date).stream()
+        batch = db.batch()
+        
+        for counter in old_counters:
+            batch.delete(counter.reference)
+        
+        # Clean transaction metadata
+        old_metadata = metadata_ref.where('__name__', '<', cutoff_date).stream()
+        
+        for metadata in old_metadata:
+            batch.delete(metadata.reference)
+        
+        batch.commit()
+        logger.info("Cleaned up old daily counters and metadata entries")
+        
     except Exception as e:
-        logger.error(f"Error connecting to Google services: {str(e)}")
-        return None, None
+        logger.error(f"Error cleaning up old counters: {str(e)}")
 
+# Initialize or load existing data
 def initialize_data():
-    """Load data from Google Sheets or create default data structure"""
-    logger.info("Initializing data from Google Sheets...")
+    logger.info("Initializing data from Firebase...")
+    
     try:
-        sheets_service, _ = get_google_services()
-        if not sheets_service:
-            raise Exception("Could not connect to Google Sheets")
+        # Get app settings
+        settings_doc = settings_ref.document('app_settings').get()
         
-        # ----- LOAD ROOMS DATA -----
-        rooms_result = sheets_service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, range='Rooms!A2:F200').execute()
-        rooms_values = rooms_result.get('values', [])
+        if not settings_doc.exists:
+            # Default settings
+            settings_ref.document('app_settings').set({
+                'last_rent_check': datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+            })
         
-        rooms_dict = {}
-        for row in rooms_values:
-            if len(row) >= 1:
-                room_number = row[0]
-                rooms_dict[room_number] = {
-                    "status": row[1] if len(row) > 1 else "vacant", 
-                    "guest": json.loads(row[2]) if len(row) > 2 and row[2] else None,
-                    "checkin_time": row[3] if len(row) > 3 else None,
-                    "balance": int(row[4]) if len(row) > 4 and row[4] else 0,
-                    "add_ons": json.loads(row[5]) if len(row) > 5 and row[5] else []
-                }
+        # Check if rooms exist, if not create default structure
+        rooms_count = len(list(rooms_ref.limit(1).stream()))
         
-        # Ensure all default rooms exist
-        first_floor_rooms = [str(i) for i in range(1, 6)] + [str(i) for i in range(13, 21)] + [str(i) for i in range(23, 28)]
-        second_floor_rooms = [str(i) for i in range(200, 229)]
-        
-        for room in first_floor_rooms + second_floor_rooms:
-            if room not in rooms_dict:
-                rooms_dict[room] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
-        
-        # ----- LOAD LOGS DATA -----
-        # Initialize logs structure
-        logs_types = ["cash", "online", "balance", "add_ons", "refunds", "renewals", "booking_payments"]
-        logs = {log_type: [] for log_type in logs_types}
-        
-        # Get logs from Google Sheets
-        logs_result = sheets_service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, range='Logs!A2:H500').execute()
-        logs_values = logs_result.get('values', [])
-        
-        # Process logs data
-        for row in logs_values:
-            if len(row) >= 6:
-                log_type = row[0]
-                if log_type in logs:
-                    log_entry = {
-                        "room": row[1],
-                        "name": row[2],
-                        "amount": int(row[3]) if row[3].isdigit() else 0,
-                        "time": row[4],
-                        "date": row[5]
-                    }
-                    # Add notes if available
-                    if len(row) > 6:
-                        log_entry["notes"] = row[6]
-                    logs[log_type].append(log_entry)
-        
-        # ----- LOAD TOTALS DATA -----
-        totals_result = sheets_service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, range='Totals!A2:B10').execute()
-        totals_values = totals_result.get('values', [])
-        
-        totals = {
-            "cash": 0, "online": 0, "balance": 0, "refunds": 0, "advance_bookings": 0
-        }
-        
-        for row in totals_values:
-            if len(row) >= 2 and row[0] in totals:
-                totals[row[0]] = int(row[1]) if row[1].isdigit() else 0
-        
-        # ----- LOAD BOOKINGS DATA -----
-        bookings_result = sheets_service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, range='Bookings!A2:M500').execute()
-        bookings_values = bookings_result.get('values', [])
-        
-        bookings = {}
-        for row in bookings_values:
-            if len(row) >= 7:
-                booking_id = row[0]
-                bookings[booking_id] = {
-                    "room": row[1],
-                    "guest_name": row[2],
-                    "guest_mobile": row[3],
-                    "check_in_date": row[4],
-                    "check_out_date": row[5],
-                    "status": row[6],
-                    "total_amount": int(row[7]) if len(row) > 7 and row[7].isdigit() else 0,
-                    "paid_amount": int(row[8]) if len(row) > 8 and row[8].isdigit() else 0,
-                    "balance": int(row[9]) if len(row) > 9 and row[9].isdigit() else 0,
-                    "payment_method": row[10] if len(row) > 10 else "cash",
-                    "notes": row[11] if len(row) > 11 else "",
-                    "photo_path": row[12] if len(row) > 12 else None
-                }
-        
-        return {
-            "rooms": rooms_dict,
-            "logs": logs,
-            "totals": totals,
-            "bookings": bookings,
-            "last_rent_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-    except Exception as e:
-        logger.error(f"Error loading data from Google Sheets: {str(e)}")
-        
-        # Create default data structure as fallback
-        rooms_dict = {}
-        
-        # First floor rooms
-        for num in list(range(1, 6)) + list(range(13, 21)) + list(range(23, 28)):
-            rooms_dict[str(num)] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
-        
-        # Second floor rooms
-        for num in range(200, 229):
-            rooms_dict[str(num)] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
-        
-        default_data = {
-            "rooms": rooms_dict,
-            "logs": {
-                "cash": [], "online": [], "balance": [], "add_ons": [], 
-                "refunds": [], "renewals": [], "booking_payments": []
-            },
-            "totals": {
-                "cash": 0, "online": 0, "balance": 0, "refunds": 0, "advance_bookings": 0
-            },
-            "bookings": {},
-            "last_rent_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        logger.info("Using default data structure")
-        return default_data
-
-def save_data(data):
-    """Save data to Google Sheets"""
-    try:
-        sheets_service, _ = get_google_services()
-        if not sheets_service:
-            raise Exception("Could not connect to Google Sheets")
-        
-        # ----- SAVE ROOMS DATA -----
-        rooms_values = []
-        for room_number, room_info in data["rooms"].items():
-            rooms_values.append([
-                room_number,
-                room_info["status"],
-                json.dumps(room_info["guest"]) if room_info["guest"] else "",
-                room_info["checkin_time"] if room_info["checkin_time"] else "",
-                str(room_info["balance"]),
-                json.dumps(room_info["add_ons"]) if room_info["add_ons"] else ""
-            ])
-        
-        # Clear and update Rooms sheet
-        sheets_service.spreadsheets().values().clear(
-            spreadsheetId=SPREADSHEET_ID, range='Rooms!A2:F500').execute()
-        
-        if rooms_values:
-            sheets_service.spreadsheets().values().update(
-                spreadsheetId=SPREADSHEET_ID, range='Rooms!A2',
-                valueInputOption='RAW', body={"values": rooms_values}).execute()
-        
-        # ----- SAVE LOGS DATA -----
-        logs_values = []
-        for log_type, log_entries in data["logs"].items():
-            for entry in log_entries:
-                log_row = [
-                    log_type,
-                    entry.get("room", ""),
-                    entry.get("name", ""),
-                    str(entry.get("amount", 0)),
-                    entry.get("time", ""),
-                    entry.get("date", ""),
-                    entry.get("notes", "")
-                ]
-                logs_values.append(log_row)
-        
-        # Clear and update Logs sheet
-        sheets_service.spreadsheets().values().clear(
-            spreadsheetId=SPREADSHEET_ID, range='Logs!A2:H500').execute()
-        
-        if logs_values:
-            sheets_service.spreadsheets().values().update(
-                spreadsheetId=SPREADSHEET_ID, range='Logs!A2',
-                valueInputOption='RAW', body={"values": logs_values}).execute()
-        
-        # ----- SAVE TOTALS DATA -----
-        totals_values = [[key, str(value)] for key, value in data["totals"].items()]
-        
-        sheets_service.spreadsheets().values().clear(
-            spreadsheetId=SPREADSHEET_ID, range='Totals!A2:B10').execute()
-        
-        if totals_values:
-            sheets_service.spreadsheets().values().update(
-                spreadsheetId=SPREADSHEET_ID, range='Totals!A2',
-                valueInputOption='RAW', body={"values": totals_values}).execute()
-        
-        # ----- SAVE BOOKINGS DATA -----
-        bookings_values = []
-        for booking_id, booking_info in data.get("bookings", {}).items():
-            bookings_values.append([
-                booking_id,
-                booking_info.get("room", ""),
-                booking_info.get("guest_name", ""),
-                booking_info.get("guest_mobile", ""),
-                booking_info.get("check_in_date", ""),
-                booking_info.get("check_out_date", ""),
-                booking_info.get("status", ""),
-                str(booking_info.get("total_amount", 0)),
-                str(booking_info.get("paid_amount", 0)),
-                str(booking_info.get("balance", 0)),
-                booking_info.get("payment_method", "cash"),
-                booking_info.get("notes", ""),
-                booking_info.get("photo_path", "")
-            ])
-        
-        sheets_service.spreadsheets().values().clear(
-            spreadsheetId=SPREADSHEET_ID, range='Bookings!A2:M500').execute()
-        
-        if bookings_values:
-            sheets_service.spreadsheets().values().update(
-                spreadsheetId=SPREADSHEET_ID, range='Bookings!A2',
-                valueInputOption='RAW', body={"values": bookings_values}).execute()
-        
-        logger.info("Data saved to Google Sheets")
+        if rooms_count == 0:
+            # Create default room structure
+            logger.info("Creating default room structure in Firestore")
+            
+            # First floor rooms
+            first_floor_rooms = list(range(1, 6)) + list(range(13, 21)) + list(range(23, 28))
+            # Second floor rooms
+            second_floor_rooms = list(range(200, 229))
+            
+            # Batch write to Firestore (for better performance)
+            batch = db.batch()
+            
+            # Add first floor rooms
+            for num in first_floor_rooms:
+                room_ref = rooms_ref.document(str(num))
+                batch.set(room_ref, {
+                    "status": "vacant", 
+                    "guest": None, 
+                    "checkin_time": None, 
+                    "balance": 0, 
+                    "add_ons": [],
+                    "renewal_count": 0,  # NEW
+                    "last_renewal_time": None  # NEW
+                })
+                
+            # Add second floor rooms
+            for num in second_floor_rooms:
+                room_ref = rooms_ref.document(str(num))
+                batch.set(room_ref, {
+                    "status": "vacant", 
+                    "guest": None, 
+                    "checkin_time": None, 
+                    "balance": 0, 
+                    "add_ons": [],
+                    "renewal_count": 0,  # NEW
+                    "last_renewal_time": None  # NEW
+                })
+            
+            # Commit the batch
+            batch.commit()
+            
+            # Create log structure - UPDATED with new log types
+            log_types = ["cash", "online", "balance", "add_ons", "refunds", "renewals", 
+                        "booking_payments", "discounts", "expenses", "room_shifts"]  # NEW: expenses, room_shifts
+            for log_type in log_types:
+                logs_ref.document(log_type).set({
+                    "entries": []
+                })
+            
+            # Create totals structure - UPDATED with new totals
+            total_types = ["cash", "online", "balance", "refunds", "advance_bookings", "expenses"]  # NEW: expenses
+            totals_doc = {}
+            for total_type in total_types:
+                totals_doc[total_type] = 0
+                
+            totals_ref.document('current_totals').set(totals_doc)
+            
+            logger.info("Default data structure created in Firebase")
+            
         return True
     except Exception as e:
-        logger.error(f"Error saving data to Google Sheets: {str(e)}")
+        logger.error(f"Error initializing Firebase data: {str(e)}")
         return False
 
-def upload_to_drive(file_path, file_name):
-    """Upload a file to Google Drive and return the public link"""
-    try:
-        _, drive_service = get_google_services()
-        if not drive_service:
-            raise Exception("Could not connect to Google Drive")
+# Load all rooms from Firestore
+def get_all_rooms():
+    rooms_dict = {}
+    rooms_stream = rooms_ref.stream()
+    
+    for room_doc in rooms_stream:
+        room_data = room_doc.to_dict()
+        rooms_dict[room_doc.id] = room_data
+        
+    return rooms_dict
+
+# Load logs from Firestore
+def get_all_logs():
+    logs_dict = {}
+    logs_stream = logs_ref.stream()
+    
+    for log_doc in logs_stream:
+        log_data = log_doc.to_dict()
+        if 'entries' in log_data:
+            logs_dict[log_doc.id] = log_data['entries']
+        else:
+            logs_dict[log_doc.id] = []
             
-        # Prepare file metadata
-        file_metadata = {
-            'name': file_name,
-            'parents': [DRIVE_FOLDER_ID]
-        }
-        
-        # Upload the file
-        media = MediaFileUpload(file_path, resumable=True)
-        file = drive_service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id,webContentLink').execute()
-        
-        # Make the file publicly accessible
-        permission = {
-            'type': 'anyone',
-            'role': 'reader'
-        }
-        drive_service.permissions().create(
-            fileId=file.get('id'),
-            body=permission).execute()
-        
-        # Return the public link
-        return file.get('webContentLink')
-    except Exception as e:
-        logger.error(f"Error uploading to Google Drive: {str(e)}")
-        return None
+    return logs_dict
 
-# ----- LOAD INITIAL DATA -----
-# Load data on startup
-data = initialize_data()
-rooms = data["rooms"]
-logs = data["logs"]
-totals = data["totals"]
-bookings = data.get("bookings", {})
+# Load totals from Firestore
+def get_totals():
+    totals_doc = totals_ref.document('current_totals').get()
+    if totals_doc.exists:
+        totals = totals_doc.to_dict()
+        # Ensure all required totals exist
+        required_totals = ["cash", "online", "balance", "refunds", "advance_bookings", "expenses"]
+        for total_type in required_totals:
+            if total_type not in totals:
+                totals[total_type] = 0
+        return totals
+    else:
+        return {
+            "cash": 0, 
+            "online": 0, 
+            "balance": 0, 
+            "refunds": 0,
+            "advance_bookings": 0,
+            "expenses": 0  # NEW
+        }
 
-# ----- ROUTES -----
+# Get last rent check time
+def get_last_rent_check():
+    settings_doc = settings_ref.document('app_settings').get()
+    if settings_doc.exists:
+        settings = settings_doc.to_dict()
+        return settings.get('last_rent_check', datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"))
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+# Update last rent check time
+def update_last_rent_check():
+    settings_ref.document('app_settings').update({
+        'last_rent_check': datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+# Initialize Firebase data
+initialize_data()
+
 @app.route("/")
 def index():
-    """Serve the main page"""
     return render_template("index.html")
 
 @app.route("/static/<path:path>")
 def serve_static(path):
-    """Serve static files"""
     return send_from_directory("static", path)
 
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
-    """Serve uploaded files"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-# Updated photo upload function with better error handling and debugging
 
 @app.route("/upload_photo", methods=["POST"])
 def upload_photo():
-    """Handle photo uploads and store in Google Drive with enhanced error handling"""
-    logger.info("Processing photo upload request")
-    
     if 'photo' not in request.files:
-        logger.warning("No file part in the request")
         return jsonify(success=False, message="No file part")
     
     file = request.files['photo']
     
     if file.filename == '':
-        logger.warning("No selected file")
         return jsonify(success=False, message="No selected file")
     
     if file:
         try:
-            # Create uploads directory if it doesn't exist
-            if not os.path.exists(app.config['UPLOAD_FOLDER']):
-                logger.info(f"Creating uploads directory: {app.config['UPLOAD_FOLDER']}")
-                os.makedirs(app.config['UPLOAD_FOLDER'])
+            # Create a temporary filename
+            filename = secure_filename(f"{datetime.now(IST).strftime('%Y%m%d%H%M%S')}-{file.filename}")
+            temp_file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             
-            # Save file locally first
-            filename = secure_filename(f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{file.filename}")
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            # Save temporarily
+            file.save(temp_file_path)
             
-            logger.info(f"Saving uploaded file temporarily to {file_path}")
-            file.save(file_path)
+            # Upload to Firebase Storage
+            blob = bucket.blob(f"guest_photos/{filename}")
+            blob.upload_from_filename(temp_file_path)
             
-            # Check if file was saved successfully
-            if not os.path.exists(file_path):
-                logger.error(f"Failed to save file to {file_path}")
-                return jsonify(success=False, message="Failed to save uploaded file")
+            # Make the file publicly accessible
+            blob.make_public()
             
-            logger.info(f"File saved successfully, size: {os.path.getsize(file_path)} bytes")
+            # Get the public URL
+            photo_url = blob.public_url
             
-            # Upload to Google Drive
-            logger.info(f"Uploading file to Google Drive: {filename}")
-            drive_link = upload_to_drive(file_path, filename)
+            # Remove temporary file
+            os.remove(temp_file_path)
             
-            if drive_link:
-                logger.info(f"Upload to Google Drive successful: {drive_link}")
-                # Remove local file after upload
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Removed temporary file: {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temporary file {file_path}: {str(e)}")
-                
-                return jsonify(success=True, filename=filename, path=drive_link)
-            else:
-                logger.error("Upload to Google Drive failed")
-                return jsonify(success=False, message="Upload to Google Drive failed")
-        
+            return jsonify(success=True, filename=filename, path=photo_url)
         except Exception as e:
-            logger.error(f"Error processing photo upload: {str(e)}")
-            return jsonify(success=False, message=f"Error processing photo: {str(e)}")
+            logger.error(f"Error uploading photo: {str(e)}")
+            return jsonify(success=False, message=f"Upload failed: {str(e)}")
     
     return jsonify(success=False, message="Upload failed")
 
-def upload_to_drive(file_path, file_name):
-    """Upload a file to Google Drive with enhanced error handling and debugging"""
-    logger.info(f"Starting upload to Drive: {file_name}")
-    
-    try:
-        # Get Google Drive service
-        _, drive_service = get_google_services()
-        
-        if not drive_service:
-            logger.error("Failed to initialize Google Drive service")
-            return None
-            
-        # Verify Drive folder exists
-        try:
-            folder = drive_service.files().get(fileId=DRIVE_FOLDER_ID).execute()
-            logger.info(f"Target Drive folder verified: {folder.get('name', 'unknown')}")
-        except Exception as e:
-            logger.error(f"Error verifying Drive folder {DRIVE_FOLDER_ID}: {str(e)}")
-            return None
-        
-        # Prepare file metadata
-        file_metadata = {
-            'name': file_name,
-            'parents': [DRIVE_FOLDER_ID]
-        }
-        
-        # Check if file exists
-        if not os.path.exists(file_path):
-            logger.error(f"File not found: {file_path}")
-            return None
-            
-        logger.info(f"Uploading file {file_path} to Drive folder {DRIVE_FOLDER_ID}")
-        
-        # Upload the file
-        media = MediaFileUpload(file_path, resumable=True)
-        file = drive_service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id,webContentLink').execute()
-        
-        # Make the file publicly accessible
-        permission = {
-            'type': 'anyone',
-            'role': 'reader'
-        }
-        
-        logger.info(f"Setting public permission for file ID: {file.get('id')}")
-        drive_service.permissions().create(
-            fileId=file.get('id'),
-            body=permission).execute()
-        
-        # Return the public link
-        logger.info(f"Upload successful, webContentLink: {file.get('webContentLink')}")
-        return file.get('webContentLink')
-    
-    except Exception as e:
-        logger.error(f"Error uploading to Google Drive: {str(e)}")
-        return None
-    
 @app.route("/checkin", methods=["POST"])
 def checkin():
-    """Handle guest check-in"""
     try:
         data_json = request.json
         room = data_json["room"]
@@ -503,13 +327,12 @@ def checkin():
         price = int(data_json["price"])
         balance = price - amount_paid
         payment = data_json["payment"]
-        photo_path = data_json.get("photoPath")
+        is_ac = data_json.get("isAC", False)
         
-        # Validation
+        # NEW: Validation - don't allow amount_paid > 0 with payment="balance"
         if amount_paid > 0 and payment == "balance":
             return jsonify(success=False, message="Cannot use 'Pay Later' with an amount paid. Please select Cash or Online.")
         
-        # Create guest record
         guest = {
             "name": data_json["name"],
             "mobile": data_json["mobile"],
@@ -517,51 +340,108 @@ def checkin():
             "guests": int(data_json["guests"]),
             "payment": payment,
             "balance": balance,
-            "photo": photo_path
+            "isAC": is_ac
         }
         
-        # Update room data
-        rooms[room]["status"] = "occupied"
-        rooms[room]["guest"] = guest
-        rooms[room]["checkin_time"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        rooms[room]["balance"] = balance
-        rooms[room]["add_ons"] = []
-        rooms[room]["renewal_count"] = 0
+        # Use consistent datetime format YYYY-MM-DD HH:MM for easier manipulation
+        current_time = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+        current_date = datetime.now(IST).strftime("%Y-%m-%d")
         
-        # Log payment if any
-        if amount_paid > 0:
-            logs[payment].append({
+        # NEW: Get serial number for fresh check-in
+        serial_number = get_next_serial_number(current_date)
+        
+        # NEW: Store transaction metadata
+        store_transaction_metadata(room, current_date, serial_number, "fresh_checkin")
+        
+        # Update room in Firestore
+        room_ref = rooms_ref.document(room)
+        room_ref.update({
+            "status": "occupied",
+            "guest": guest,
+            "checkin_time": current_time,
+            "balance": balance,
+            "add_ons": [],
+            "renewal_count": 0,  # NEW
+            "last_renewal_time": None  # NEW
+        })
+        
+        # Get current totals
+        totals = get_totals()
+        
+        # NEW: Always log the transaction, even for pay later (amount = 0)
+        if payment != "balance":
+            # For cash/online payments
+            if amount_paid > 0:
+                log_entry = {
+                    "room": room, 
+                    "name": guest["name"], 
+                    "amount": amount_paid, 
+                    "time": datetime.now(IST).strftime("%H:%M"),
+                    "date": current_date,
+                    "serial_number": serial_number,  # NEW
+                    "transaction_type": "fresh_checkin",  # NEW
+                    "is_fresh_checkin": True  # NEW
+                }
+                
+                # Update payment logs
+                logs_ref.document(payment).update({
+                    "entries": firestore.ArrayUnion([log_entry])
+                })
+                
+                # Update totals
+                totals[payment] += amount_paid
+        else:
+            # NEW: For pay later, log with amount 0 in cash logs to show the transaction
+            pay_later_log = {
                 "room": room, 
                 "name": guest["name"], 
-                "amount": amount_paid, 
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d")
+                "amount": 0, 
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": current_date,
+                "serial_number": serial_number,  # NEW
+                "transaction_type": "fresh_checkin",  # NEW
+                "is_fresh_checkin": True,  # NEW
+                "payment_method": "pay_later"  # NEW
+            }
+            
+            logs_ref.document("cash").update({
+                "entries": firestore.ArrayUnion([pay_later_log])
             })
-            totals[payment] += amount_paid
         
-        # Log balance if any
+        # Add balance log if needed with metadata
         if balance > 0:
-            logs["balance"].append({
+            balance_log = {
                 "room": room, 
                 "name": guest["name"], 
                 "amount": balance,
-                "date": datetime.now().strftime("%Y-%m-%d")
+                "date": current_date,
+                "serial_number": serial_number,  # NEW
+                "transaction_type": "fresh_checkin"  # NEW
+            }
+            
+            # Update balance logs
+            logs_ref.document("balance").update({
+                "entries": firestore.ArrayUnion([balance_log])
             })
+            
+            # Update totals
             totals["balance"] += balance
         
-        # Save to Google Sheets
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                  "last_rent_check": data.get("last_rent_check")})
-        
-        logger.info(f"Check-in successful for room {room}, guest: {guest['name']}")
-        return jsonify(success=True, message=f"Check-in successful for {guest['name']}")
+        # Update totals in Firestore
+        totals_ref.document('current_totals').set(totals)
+            
+        logger.info(f"Check-in successful for room {room}, guest: {guest['name']}, serial: {serial_number}")
+        return jsonify(
+            success=True, 
+            message=f"Check-in successful for {guest['name']} (#{serial_number})",  # NEW: Include serial number
+            serial_number=serial_number  # NEW
+        )
     except Exception as e:
         logger.error(f"Error during check-in: {str(e)}")
         return jsonify(success=False, message=f"Error during check-in: {str(e)}")
 
 @app.route("/checkout", methods=["POST"])
 def checkout():
-    """Handle checkout, payments and refunds"""
     try:
         data_json = request.json
         room = data_json["room"]
@@ -570,136 +450,235 @@ def checkout():
         is_refund = data_json.get("is_refund", False)
         is_final_checkout = data_json.get("final_checkout", False)
         process_refund = data_json.get("process_refund", False)
+        settle_later = data_json.get("settle_later", False)
         
-        # Handle payment
-        if amount > 0 and payment_mode and not is_refund and not process_refund:
-            current_balance = rooms[room]["balance"]
+        # Get current room data
+        room_doc = rooms_ref.document(room).get()
+        if not room_doc.exists:
+            return jsonify(success=False, message="Room not found")
             
-            # Log the payment
-            logs[payment_mode].append({
+        room_data = room_doc.to_dict()
+        
+        # Get current totals
+        totals = get_totals()
+        
+        # If this is a payment to clear balance
+        if amount > 0 and payment_mode and not is_refund and not process_refund:
+            current_balance = room_data["balance"]
+            
+            # NEW: Determine if this is a renewal payment
+            is_renewal_payment = False
+            if room_data["guest"] and room_data["checkin_time"]:
+                try:
+                    checkin_date = datetime.strptime(room_data["checkin_time"].split()[0], "%Y-%m-%d")
+                    current_date = datetime.now(IST).date()
+                    days_since_checkin = (current_date - checkin_date.date()).days
+                    is_renewal_payment = days_since_checkin >= 1
+                except:
+                    is_renewal_payment = False
+            
+            # NEW: Log the payment with enhanced metadata
+            log_entry = {
                 "room": room, 
-                "name": rooms[room]["guest"]["name"], 
+                "name": room_data["guest"]["name"], 
                 "amount": amount, 
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d")
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
+                "is_renewal": is_renewal_payment,  # NEW
+                "transaction_type": "renewal_payment" if is_renewal_payment else "regular_payment"  # NEW
+            }
+            
+            # Add to payment logs
+            logs_ref.document(payment_mode).update({
+                "entries": firestore.ArrayUnion([log_entry])
             })
+            
+            # Update totals
             totals[payment_mode] += amount
             
-            # Update balance
+            # Handle balance updates
             if current_balance > 0:
                 if amount >= current_balance:
                     totals["balance"] -= current_balance
                     overpayment = amount - current_balance
                     
                     if overpayment > 0:
-                        rooms[room]["balance"] = -overpayment
+                        new_balance = -overpayment
                         message = f"Payment of ₹{amount} received. Balance cleared. Overpayment: ₹{overpayment}"
                     else:
-                        rooms[room]["balance"] = 0
+                        new_balance = 0
                         message = f"Payment of ₹{amount} received. Balance cleared."
                 else:
-                    rooms[room]["balance"] -= amount
+                    new_balance = current_balance - amount
                     totals["balance"] -= amount
                     message = "Payment recorded successfully."
             else:
-                rooms[room]["balance"] -= amount
+                new_balance = current_balance - amount
                 message = "Payment recorded successfully."
-                
-            save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                      "last_rent_check": data.get("last_rent_check")})
-            logger.info(f"Payment of ₹{amount} recorded for room {room}")
             
+            # Update room balance in Firestore
+            rooms_ref.document(room).update({
+                "balance": new_balance
+            })
+            
+            # Update totals in Firestore
+            totals_ref.document('current_totals').set(totals)
+            
+            logger.info(f"Payment of ₹{amount} recorded for room {room} (type: {log_entry['transaction_type']})")
             return jsonify(success=True, message=message)
         
-        # Handle refund
+        # Process manual refund (from process refund button)
         elif process_refund and is_refund and amount > 0:
-            current_balance = rooms[room]["balance"]
+            current_balance = room_data["balance"]
             
-            # Validation
+            # Validate that refund amount doesn't exceed available balance
             if abs(current_balance) < amount:
-                return jsonify(success=False, 
-                    message=f"Refund amount (₹{amount}) exceeds available balance (₹{abs(current_balance)})")
+                return jsonify(
+                    success=False, 
+                    message=f"Refund amount (₹{amount}) exceeds available balance (₹{abs(current_balance)})"
+                )
             
+            # Get refund details
             refund_method = payment_mode or "cash"
-            guest_name = rooms[room]["guest"]["name"]
+            guest_name = room_data["guest"]["name"]
             
-            # Create refund log
+            # NEW: Create refund log entry - SINGLE LOG for manual refunds
             refund_log = {
                 "room": room,
                 "name": guest_name,
                 "amount": amount,
                 "payment_mode": refund_method,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "note": "Partial refund" if abs(current_balance) > amount else "Full refund"
+                "time": data_json.get("time", datetime.now(IST).strftime("%H:%M")),
+                "date": data_json.get("date", datetime.now(IST).strftime("%Y-%m-%d")),
+                "note": "Manual refund",
+                "transaction_type": "manual_refund"  # NEW
             }
             
-            # Update logs and totals
-            if "refunds" not in logs:
-                logs["refunds"] = []
-            logs["refunds"].append(refund_log)
+            # Only add to refunds log - NO DUPLICATION
+            logs_ref.document("refunds").update({
+                "entries": firestore.ArrayUnion([refund_log])
+            })
             
-            rooms[room]["balance"] += amount
+            # Update room balance
+            new_balance = current_balance + amount
+            rooms_ref.document(room).update({
+                "balance": new_balance
+            })
             
-            if "refunds" not in totals:
-                totals["refunds"] = 0
+            # Update total refunds
             totals["refunds"] += amount
+            totals_ref.document('current_totals').set(totals)
             
-            save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                      "last_rent_check": data.get("last_rent_check")})
-            logger.info(f"Refund of ₹{amount} processed for room {room}")
+            logger.info(f"Manual refund of ₹{amount} processed for room {room}")
             
             return jsonify(success=True, message=f"Refund of ₹{amount} processed successfully")
         
-        # Handle final checkout
+        # FIXED: Process final checkout - prevent double refund logging
         elif is_final_checkout:
-            balance = rooms[room]["balance"]
-            if balance > 0:
+            # Check balance status
+            balance = room_data["balance"]
+            guest_name = room_data["guest"]["name"] if room_data["guest"] else "Unknown"
+            
+            # Handle settlements first
+            if balance > 0 and settle_later:
+                settlement_id = str(uuid.uuid4())
+                guest_info = room_data["guest"]
+                settlement_amount = balance
+                
+                settlement = {
+                    "id": settlement_id,
+                    "guest_name": guest_info["name"],
+                    "guest_mobile": guest_info["mobile"],
+                    "room": room,
+                    "amount": settlement_amount,
+                    "checkout_date": datetime.now(IST).strftime("%Y-%m-%d"),
+                    "checkout_time": datetime.now(IST).strftime("%H:%M"),
+                    "status": "pending",
+                    "notes": data_json.get("settlement_notes", ""),
+                    "photo": guest_info.get("photo")
+                }
+                
+                # Add to settlements collection
+                settlements_ref.document(settlement_id).set(settlement)
+                
+                # Reduce balance from totals
+                totals["balance"] -= settlement_amount
+                
+                # Add to balance logs
+                balance_log = {
+                    "room": room,
+                    "name": guest_info["name"],
+                    "amount": -settlement_amount,
+                    "time": datetime.now(IST).strftime("%H:%M"),
+                    "date": datetime.now(IST).strftime("%Y-%m-%d"),
+                    "note": "Converted to 'settle later' during checkout",
+                    "settlement_id": settlement_id,
+                    "transaction_type": "settlement"  # NEW
+                }
+                
+                logs_ref.document("balance").update({
+                    "entries": firestore.ArrayUnion([balance_log])
+                })
+                
+                logger.info(f"Settlement created for room {room}, amount: ₹{settlement_amount}")
+            
+            # Prevent checkout if positive balance and not settling later
+            elif balance > 0 and not settle_later:
                 return jsonify(success=False, message="Please clear the balance before checkout")
             
-            # Process refund if negative balance
-            if balance < 0 and "refund_method" in data_json:
+            # NEW: Handle checkout refund ONLY if refund_method is provided and balance is negative
+            refund_processed = False
+            if balance < 0 and data_json.get("refund_method"):
                 refund_amount = abs(balance)
                 refund_method = data_json.get("refund_method", "cash")
                 
-                # Log refund
-                refund_log = {
+                # Create SINGLE checkout refund log
+                checkout_refund_log = {
                     "room": room,
-                    "name": rooms[room]["guest"]["name"],
+                    "name": guest_name,
                     "amount": refund_amount,
                     "payment_mode": refund_method,
-                    "time": datetime.now().strftime("%H:%M"),
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "note": "Checkout refund"
+                    "time": datetime.now(IST).strftime("%H:%M"),
+                    "date": datetime.now(IST).strftime("%Y-%m-%d"),
+                    "note": "Checkout refund",
+                    "transaction_type": "checkout_refund"  # NEW
                 }
                 
-                if "refunds" not in logs:
-                    logs["refunds"] = []
-                logs["refunds"].append(refund_log)
+                # SINGLE LOG ENTRY - only add to refunds, nowhere else
+                logs_ref.document("refunds").update({
+                    "entries": firestore.ArrayUnion([checkout_refund_log])
+                })
                 
-                if "refunds" not in totals:
-                    totals["refunds"] = 0
                 totals["refunds"] += refund_amount
+                refund_processed = True
                 
-                logger.info(f"Checkout refund of ₹{refund_amount} processed for room {room}")
+                logger.info(f"Checkout refund of ₹{refund_amount} processed for room {room} via {refund_method}")
             
-            # Clear room data
-            guest_name = rooms[room]["guest"]["name"] if rooms[room]["guest"] else "Unknown"
-            rooms[room] = {
+            # Clear room data - this should happen regardless
+            rooms_ref.document(room).update({
                 "status": "vacant", 
                 "guest": None, 
                 "checkin_time": None, 
                 "balance": 0, 
-                "add_ons": []
-            }
+                "add_ons": [],
+                "renewal_count": 0,  # NEW
+                "last_renewal_time": None  # NEW
+            })
             
-            save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                      "last_rent_check": data.get("last_rent_check")})
+            # Update totals
+            totals_ref.document('current_totals').set(totals)
+            
+            # Create appropriate success message
+            if refund_processed:
+                refund_amount = abs(balance)
+                message = f"Checkout successful. Refund of ₹{refund_amount} processed."
+            else:
+                message = "Checkout successful"
+            
             logger.info(f"Room {room} checked out. Guest: {guest_name}")
-            
-            return jsonify(success=True, message=f"Checkout successful")
+            return jsonify(success=True, message=message)
         
-        # Invalid request
+        # If none of the above conditions match
         return jsonify(success=False, message="Invalid request parameters")
             
     except Exception as e:
@@ -708,59 +687,104 @@ def checkout():
 
 @app.route("/add_on", methods=["POST"])
 def add_on():
-    """Add a service/item to a room"""
     try:
         data_json = request.json
         room = data_json["room"]
         item = data_json["item"]
         price = int(data_json["price"])
-        payment_method = data_json.get("payment_method", "balance")  # Default to balance
+        payment_method = data_json.get("payment_method", "balance")  # Default to balance if not specified
         
-        # Create add-on entry
+        # NEW: New fields for quantity tracking
+        unit_price = data_json.get("unit_price", price)  # If not provided, use the price (for backward compatibility)
+        quantity = data_json.get("quantity", 1)  # Default to 1 if not specified
+        
+        # Get current room data
+        room_doc = rooms_ref.document(room).get()
+        if not room_doc.exists:
+            return jsonify(success=False, message="Room not found")
+            
+        room_data = room_doc.to_dict()
+        
+        # Get totals
+        totals = get_totals()
+        
+        # NEW: Create add-on entry WITHOUT serial number (services don't get serial numbers)
         add_on_entry = {
             "room": room, 
             "item": item, 
             "price": price, 
-            "time": datetime.now().strftime("%H:%M"),
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "payment_method": payment_method
+            "unit_price": unit_price,  # NEW
+            "quantity": quantity,  # NEW
+            "time": datetime.now(IST).strftime("%H:%M"),
+            "date": datetime.now(IST).strftime("%Y-%m-%d"),
+            "payment_method": payment_method,
+            "transaction_type": "service"  # NEW: Mark as service transaction
         }
         
-        # Handle immediate payment
+        # If payment is immediate (cash or online), log it as a payment with item information
         if payment_method in ["cash", "online"]:
-            logs[payment_method].append({
+            payment_log = {
                 "room": room,
-                "name": rooms[room]["guest"]["name"],
+                "name": room_data["guest"]["name"],
                 "amount": price,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "item": item,
-                "payment_method": payment_method
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
+                "item": item,  # Add item info to indicate this is a service payment
+                "unit_price": unit_price,  # NEW
+                "quantity": quantity,  # NEW
+                "payment_method": payment_method,
+                "transaction_type": "service"  # NEW: Mark as service
+                # NO serial_number for services
+            }
+            
+            # Update payment logs
+            logs_ref.document(payment_method).update({
+                "entries": firestore.ArrayUnion([payment_log])
             })
+            
+            # Update totals
             totals[payment_method] += price
         else:
-            # Add to balance
-            rooms[room]["balance"] += price
+            # Add to balance if payment method is "balance" (pay later)
+            new_balance = room_data["balance"] + price
+            rooms_ref.document(room).update({
+                "balance": new_balance
+            })
+            
             totals["balance"] += price
             
-            logs["balance"].append({
+            # Log in balance logs
+            balance_log = {
                 "room": room,
-                "name": rooms[room]["guest"]["name"],
+                "name": room_data["guest"]["name"],
                 "amount": price,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "item": item,
-                "note": f"Added {item} to balance"
+                "unit_price": unit_price,  # NEW
+                "quantity": quantity,  # NEW
+                "note": f"Added {item} to balance",
+                "transaction_type": "service"  # NEW
+                # NO serial_number for services
+            }
+            
+            logs_ref.document("balance").update({
+                "entries": firestore.ArrayUnion([balance_log])
             })
         
-        # Keep record in room
-        rooms[room]["add_ons"].append(add_on_entry)
+        # Always add to room's add-ons list for record keeping
+        rooms_ref.document(room).update({
+            "add_ons": firestore.ArrayUnion([add_on_entry])
+        })
         
-        # Keep central log
-        logs["add_ons"].append(add_on_entry)
+        # Also log in the central add-ons log
+        logs_ref.document("add_ons").update({
+            "entries": firestore.ArrayUnion([add_on_entry])
+        })
         
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                  "last_rent_check": data.get("last_rent_check")})
+        # Update totals
+        totals_ref.document('current_totals').set(totals)
+        
         logger.info(f"Add-on '{item}' added to room {room}, price: ₹{price}, payment: {payment_method}")
         
         if payment_method == "balance":
@@ -773,12 +797,19 @@ def add_on():
 
 @app.route("/get_data")
 def get_data():
-    """Return all data for the frontend"""
-    return jsonify(rooms=rooms, logs=logs, totals=totals)
+    try:
+        # Get data from Firestore
+        rooms = get_all_rooms()
+        logs = get_all_logs()
+        totals = get_totals()
+        
+        return jsonify(rooms=rooms, logs=logs, totals=totals)
+    except Exception as e:
+        logger.error(f"Error getting data: {str(e)}")
+        return jsonify(success=False, message=f"Error getting data: {str(e)}") 
 
 @app.route("/get_history", methods=["POST"])
 def get_history():
-    """Get transaction history for a specific room and guest"""
     try:
         data_json = request.json
         room = data_json.get("room")
@@ -787,9 +818,12 @@ def get_history():
         if not room or not guest_name:
             return jsonify(success=False, message="Room and guest name are required.")
         
+        # Get logs from Firestore
+        logs = get_all_logs()
+        
         # Filter logs for this specific room and guest
-        room_cash_logs = [log for log in logs["cash"] if log["room"] == room and log["name"] == guest_name]
-        room_online_logs = [log for log in logs["online"] if log["room"] == room and log["name"] == guest_name]
+        room_cash_logs = [log for log in logs.get("cash", []) if log["room"] == room and log["name"] == guest_name]
+        room_online_logs = [log for log in logs.get("online", []) if log["room"] == room and log["name"] == guest_name]
         room_refund_logs = [log for log in logs.get("refunds", []) if log["room"] == room and log["name"] == guest_name]
         room_addons_logs = [log for log in logs.get("add_ons", []) if log["room"] == room]
         room_renewal_logs = [log for log in logs.get("renewals", []) if log["room"] == room and log["name"] == guest_name]
@@ -808,45 +842,69 @@ def get_history():
 
 @app.route("/renew_rent", methods=["POST"])
 def renew_rent():
-    """Renew rent for a room"""
     try:
         data_json = request.json
         room = data_json["room"]
         
-        if room not in rooms or rooms[room]["status"] != "occupied" or not rooms[room]["guest"]:
+        # Get current room data
+        room_doc = rooms_ref.document(room).get()
+        if not room_doc.exists:
+            return jsonify(success=False, message="Room not found")
+            
+        room_data = room_doc.to_dict()
+        
+        if room_data["status"] != "occupied" or not room_data["guest"]:
             return jsonify(success=False, message="Room not occupied.")
         
-        guest = rooms[room]["guest"]
+        guest = room_data["guest"]
         price = guest["price"]
         
         # Add new balance for rent renewal
-        rooms[room]["balance"] += price
+        new_balance = room_data["balance"] + price
+        
+        # NEW: Update renewal count - this is the key value used to calculate next renewal time
+        renewal_count = data_json.get("renewal_count", 0)
+        
+        # Update room in Firestore
+        rooms_ref.document(room).update({
+            "balance": new_balance,
+            "renewal_count": renewal_count  # NEW
+        })
+        
+        # Get totals and update balance
+        totals = get_totals()
         totals["balance"] += price
+        totals_ref.document('current_totals').set(totals)
         
-        # Update renewal count for tracking
-        rooms[room]["renewal_count"] = data_json.get("renewal_count", 0)
+        logger.info(f"Rent renewed for room {room}, new renewal count: {renewal_count}")
         
-        # Log the renewal
-        renewal_count = rooms[room]["renewal_count"]
+        # NEW: Log the renewal - NO SERIAL NUMBER for renewals
         renewal_log = {
             "room": room, 
             "name": guest["name"], 
             "amount": price,
-            "time": datetime.now().strftime("%H:%M"),
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "time": datetime.now(IST).strftime("%H:%M"),
+            "date": datetime.now(IST).strftime("%Y-%m-%d"),
             "note": f"Day {renewal_count + 1} rent renewal",
-            "day": renewal_count + 1
+            "day": renewal_count + 1,
+            "transaction_type": "rent_renewal"  # NEW
+            # NO serial_number for renewals
         }
         
-        logs["balance"].append(renewal_log)
+        # Add to balance logs
+        logs_ref.document("balance").update({
+            "entries": firestore.ArrayUnion([renewal_log])
+        })
         
-        if "renewals" in logs:
-            logs["renewals"].append(renewal_log)
+        # Also add to renewals log
+        logs_ref.document("renewals").update({
+            "entries": firestore.ArrayUnion([renewal_log])
+        })
         
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                  "last_rent_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+        # Update last rent check time
+        update_last_rent_check()
+        
         logger.info(f"Rent renewed for Room {room}, Day {renewal_count + 1}")
-        
         return jsonify(success=True, message=f"Rent renewed for Room {room}")
     except Exception as e:
         logger.error(f"Error renewing rent: {str(e)}")
@@ -854,28 +912,32 @@ def renew_rent():
 
 @app.route("/update_checkin_time", methods=["POST"])
 def update_checkin_time():
-    """Update the check-in time for a room"""
     try:
         data_json = request.json
         room = data_json["room"]
         new_checkin_time = data_json["checkin_time"]
         
-        if room not in rooms or rooms[room]["status"] != "occupied":
-            return jsonify(success=False, message="Room not found or not occupied.")
+        # Get current room data
+        room_doc = rooms_ref.document(room).get()
+        if not room_doc.exists:
+            return jsonify(success=False, message="Room not found")
+            
+        room_data = room_doc.to_dict()
         
-        # Reset renewal data
-        rooms[room]["renewal_count"] = 0
+        if room_data["status"] != "occupied":
+            return jsonify(success=False, message="Room not occupied.")
         
         # Validate the new time
         datetime.strptime(new_checkin_time, "%Y-%m-%d %H:%M")
         
-        # Update the checkin time
-        rooms[room]["checkin_time"] = new_checkin_time
+        # NEW: Reset renewal data when changing check-in time
+        rooms_ref.document(room).update({
+            "checkin_time": new_checkin_time,
+            "renewal_count": 0,  # NEW
+            "last_renewal_time": None  # NEW
+        })
         
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "bookings": bookings, 
-                  "last_rent_check": data.get("last_rent_check")})
         logger.info(f"Check-in time updated for room {room}: {new_checkin_time}")
-        
         return jsonify(success=True, message="Check-in time updated successfully.")
     except Exception as e:
         logger.error(f"Error updating check-in time: {str(e)}")
@@ -883,10 +945,10 @@ def update_checkin_time():
 
 @app.route("/get_room_numbers", methods=["GET"])
 def get_room_numbers():
-    """Get all room numbers for the frontend"""
     try:
-        # Return a list of all room numbers for autocomplete
-        room_numbers = list(rooms.keys())
+        # Get all rooms from Firestore
+        rooms_stream = rooms_ref.stream()
+        room_numbers = [doc.id for doc in rooms_stream]
         
         # Sort rooms by floor and number
         def room_sort_key(room_num):
@@ -921,21 +983,29 @@ def add_room():
         
         if not room_number:
             return jsonify(success=False, message="Room number is required")
-            
-        if room_number in rooms:
+        
+        # Check if room already exists
+        room_doc = rooms_ref.document(room_number).get()
+        if room_doc.exists:
             return jsonify(success=False, message=f"Room {room_number} already exists")
             
         # Add the new room
-        rooms[room_number] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
+        rooms_ref.document(room_number).set({
+            "status": "vacant", 
+            "guest": None, 
+            "checkin_time": None, 
+            "balance": 0, 
+            "add_ons": [],
+            "renewal_count": 0,  # NEW
+            "last_renewal_time": None  # NEW
+        })
         
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
         logger.info(f"New room {room_number} added")
         return jsonify(success=True, message=f"Room {room_number} added successfully")
         
     except Exception as e:
         logger.error(f"Error adding new room: {str(e)}")
         return jsonify(success=False, message=f"Error adding new room: {str(e)}")
-
 
 @app.route("/apply_discount", methods=["POST"])
 def apply_discount():
@@ -945,10 +1015,14 @@ def apply_discount():
         amount = int(data_json.get("amount", 0))
         reason = data_json.get("reason", "Discount")
         
-        if room not in rooms:
+        # Get room data
+        room_doc = rooms_ref.document(room).get()
+        if not room_doc.exists:
             return jsonify(success=False, message="Room not found.")
             
-        if rooms[room]["status"] != "occupied":
+        room_data = room_doc.to_dict()
+            
+        if room_data["status"] != "occupied":
             return jsonify(success=False, message="Room is not occupied.")
         
         if amount <= 0:
@@ -958,105 +1032,125 @@ def apply_discount():
         discount_entry = {
             "amount": amount,
             "reason": reason,
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "time": datetime.now().strftime("%H:%M")
+            "date": datetime.now(IST).strftime("%Y-%m-%d"),
+            "time": datetime.now(IST).strftime("%H:%M")
         }
         
-        # Initialize discounts array if it doesn't exist
-        if "discounts" not in rooms[room]:
-            rooms[room]["discounts"] = []
-        
-        # Add discount to room
-        rooms[room]["discounts"].append(discount_entry)
+        # Add discount to room's discount array
+        if "discounts" not in room_data:
+            room_data["discounts"] = []
+            
+        # Update discounts in room document
+        rooms_ref.document(room).update({
+            "discounts": firestore.ArrayUnion([discount_entry])
+        })
         
         # Adjust balance
-        if rooms[room]["balance"] > 0:
+        current_balance = room_data["balance"]
+        new_balance = current_balance
+        
+        if current_balance > 0:
             # Only reduce balance if there is an outstanding amount
-            rooms[room]["balance"] = max(0, rooms[room]["balance"] - amount)
+            new_balance = max(0, current_balance - amount)
             
             # Adjust totals
+            totals = get_totals()
             if "balance" in totals:
                 totals["balance"] = max(0, totals["balance"] - amount)
+                totals_ref.document('current_totals').set(totals)
         else:
             # If balance is already paid or negative (refund due), 
             # create a negative balance (additional refund)
-            rooms[room]["balance"] -= amount
+            new_balance = current_balance - amount
         
-        # Log the discount
-        if "discounts" not in logs:
-            logs["discounts"] = []
-            
-        logs["discounts"].append({
-            "room": room,
-            "name": rooms[room]["guest"]["name"],
-            "amount": amount,
-            "reason": reason,
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "time": datetime.now().strftime("%H:%M")
+        # Update room balance
+        rooms_ref.document(room).update({
+            "balance": new_balance
         })
         
-        # Save data
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
+        # Log the discount
+        discount_log = {
+            "room": room,
+            "name": room_data["guest"]["name"],
+            "amount": amount,
+            "reason": reason,
+            "date": datetime.now(IST).strftime("%Y-%m-%d"),
+            "time": datetime.now(IST).strftime("%H:%M")
+        }
+        
+        logs_ref.document("discounts").update({
+            "entries": firestore.ArrayUnion([discount_log])
+        })
+        
         logger.info(f"Discount of ₹{amount} applied to room {room}, reason: {reason}")
         
         return jsonify(success=True, message=f"Discount of ₹{amount} applied successfully.")
     except Exception as e:
         logger.error(f"Error applying discount: {str(e)}")
         return jsonify(success=False, message=f"Error applying discount: {str(e)}")
-    
+
 @app.route("/transfer_room", methods=["POST"])
 def transfer_room():
     try:
         data_json = request.json
-        old_room = str(data_json["old_room"])  # Convert to string
-        new_room = str(data_json["new_room"])  # Convert to string
+        old_room = str(data_json["old_room"])
+        new_room = str(data_json["new_room"])
         
-        # Check if both rooms exist and conditions are met
-        if old_room not in rooms or new_room not in rooms:
+        # Get room data
+        old_room_doc = rooms_ref.document(old_room).get()
+        new_room_doc = rooms_ref.document(new_room).get()
+        
+        if not old_room_doc.exists or not new_room_doc.exists:
             return jsonify(success=False, message="One or both rooms do not exist.")
             
-        if rooms[old_room]["status"] != "occupied":
+        old_room_data = old_room_doc.to_dict()
+        new_room_data = new_room_doc.to_dict()
+            
+        if old_room_data["status"] != "occupied":
             return jsonify(success=False, message="Source room is not occupied.")
             
-        if rooms[new_room]["status"] != "vacant":
+        if new_room_data["status"] != "vacant":
             return jsonify(success=False, message="Destination room is not vacant.")
         
         # Store guest name before transfer
-        guest_name = rooms[old_room]["guest"]["name"]
+        guest_name = old_room_data["guest"]["name"]
         
-        # Transfer guest data
-        rooms[new_room] = rooms[old_room].copy()
+        # Transfer guest data to new room
+        rooms_ref.document(new_room).set(old_room_data)
         
         # Clear old room
-        rooms[old_room] = {"status": "vacant", "guest": None, "checkin_time": None, "balance": 0, "add_ons": []}
+        rooms_ref.document(old_room).set({
+            "status": "vacant", 
+            "guest": None, 
+            "checkin_time": None, 
+            "balance": 0, 
+            "add_ons": [],
+            "renewal_count": 0,  # NEW
+            "last_renewal_time": None  # NEW
+        })
         
-        # Update log entries to point to the new room
-        for log_type in ["cash", "online", "balance", "add_ons", "refunds", "renewals"]:
-            if log_type in logs:
-                for log in logs[log_type]:
-                    if log["room"] == old_room and log["name"] == guest_name:
-                        log["room"] = new_room
-                        log["room_shifted"] = True
-                        log["old_room"] = old_room
-        
-        # Record the room shift event
+        # NEW: Record the room shift event
         shift_log = {
             "room": new_room,
             "name": guest_name,
             "old_room": old_room,
-            "time": datetime.now().strftime("%H:%M"),
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "time": datetime.now(IST).strftime("%H:%M"),
+            "date": datetime.now(IST).strftime("%Y-%m-%d"),
             "note": f"Transferred from Room {old_room} to Room {new_room}"
         }
         
         # Create a room_shifts log if it doesn't exist
-        if "room_shifts" not in logs:
-            logs["room_shifts"] = []
-            
-        logs["room_shifts"].append(shift_log)
+        room_shifts_doc = logs_ref.document("room_shifts").get()
+        if not room_shifts_doc.exists:
+            logs_ref.document("room_shifts").set({
+                "entries": [shift_log]
+            })
+        else:
+            logs_ref.document("room_shifts").update({
+                "entries": firestore.ArrayUnion([shift_log])
+            })
         
-        # Save the updated data
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
+        logger.info(f"Guest transferred from Room {old_room} to Room {new_room}")
         
         return jsonify(
             success=True, 
@@ -1066,8 +1160,6 @@ def transfer_room():
     except Exception as e:
         logger.error(f"Error transferring room: {str(e)}", exc_info=True)
         return jsonify(success=False, message=f"Error transferring room: {str(e)}")
-
-# Add these endpoints to app.py
 
 @app.route("/add_expense", methods=["POST"])
 def add_expense():
@@ -1083,10 +1175,6 @@ def add_expense():
         if not date or not category or not description or amount <= 0 or not payment_method:
             return jsonify(success=False, message="All fields are required")
         
-        # Ensure expenses log exists
-        if "expenses" not in logs:
-            logs["expenses"] = []
-        
         # Create expense entry
         expense_entry = {
             "date": date,
@@ -1095,24 +1183,27 @@ def add_expense():
             "amount": amount,
             "payment_method": payment_method,
             "expense_type": expense_type,
-            "time": datetime.now().strftime("%H:%M")
+            "time": datetime.now(IST).strftime("%H:%M")
         }
         
         # Add to expenses log
-        logs["expenses"].append(expense_entry)
+        expenses_doc = logs_ref.document("expenses").get()
+        if not expenses_doc.exists:
+            logs_ref.document("expenses").set({
+                "entries": [expense_entry]
+            })
+        else:
+            logs_ref.document("expenses").update({
+                "entries": firestore.ArrayUnion([expense_entry])
+            })
         
         # Only transaction expenses affect daily totals
         if expense_type == "transaction":
-            # Ensure expenses total exists
-            if "expenses" not in totals:
-                totals["expenses"] = 0
-                
-            # Update total expenses
+            # Update totals
+            totals = get_totals()
             totals["expenses"] += amount
+            totals_ref.document('current_totals').set(totals)
         
-        save_data({"rooms": rooms, "logs": logs, "totals": totals, "last_rent_check": data.get("last_rent_check")})
-        
-        # Log the expense
         logger.info(f"Expense added: {description}, Category: {category}, Amount: ₹{amount}, Type: {expense_type}")
         
         return jsonify(success=True, message=f"Expense of ₹{amount} added successfully")
@@ -1120,7 +1211,6 @@ def add_expense():
         logger.error(f"Error adding expense: {str(e)}")
         return jsonify(success=False, message=f"Error adding expense: {str(e)}")
 
-# Update the reports endpoint to include expenses
 @app.route("/reports", methods=["POST"])
 def get_reports():
     try:
@@ -1134,15 +1224,18 @@ def get_reports():
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)  # Include end date
         
+        # Get logs from Firestore
+        all_logs = get_all_logs()
+        
         # Filter logs by date range
-        cash_logs = [log for log in logs["cash"] if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
-        online_logs = [log for log in logs["online"] if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
-        add_on_logs = [log for log in logs["add_ons"] if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
-        refund_logs = [log for log in logs.get("refunds", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
-        renewal_logs = [log for log in logs.get("renewals", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        cash_logs = [log for log in all_logs.get("cash", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        online_logs = [log for log in all_logs.get("online", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        add_on_logs = [log for log in all_logs.get("add_ons", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        refund_logs = [log for log in all_logs.get("refunds", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
+        renewal_logs = [log for log in all_logs.get("renewals", []) if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
         
         # Filter expense logs
-        expense_logs = logs.get("expenses", [])
+        expense_logs = all_logs.get("expenses", [])
         filtered_expense_logs = [log for log in expense_logs if start <= datetime.strptime(log.get("date", "1970-01-01"), "%Y-%m-%d") < end]
         
         # Calculate summaries
@@ -1160,9 +1253,12 @@ def get_reports():
         checkins = 0
         renewals = len(renewal_logs)
         
-        # Proper way to count check-ins from existing rooms
-        for room_info in rooms.values():
-            if room_info["checkin_time"]:
+        # Get all rooms
+        rooms_data = get_all_rooms()
+        
+        # Count check-ins from room data
+        for room_info in rooms_data.values():
+            if room_info.get("checkin_time"):
                 try:
                     checkin_date = datetime.strptime(room_info["checkin_time"].split(" ")[0], "%Y-%m-%d")
                     if start <= checkin_date < end:
@@ -1193,20 +1289,19 @@ def get_reports():
     except Exception as e:
         logger.error(f"Error generating report: {str(e)}")
         return jsonify(success=False, message=f"Error generating report: {str(e)}")
-    
-# Get all future bookings
+
 @app.route("/get_bookings", methods=["GET"])
 def get_bookings():
     try:
-        # Load bookings from data
-        bookings = data.get("bookings", {})
+        # Get bookings from Firestore
+        bookings_stream = bookings_ref.stream()
         
         # Convert to list for easier frontend handling
         bookings_list = []
-        for booking_id, booking in bookings.items():
-            booking_copy = booking.copy()
-            booking_copy["booking_id"] = booking_id
-            bookings_list.append(booking_copy)
+        for booking_doc in bookings_stream:
+            booking = booking_doc.to_dict()
+            booking["booking_id"] = booking_doc.id
+            bookings_list.append(booking)
         
         # Sort by check-in date (most recent first)
         bookings_list.sort(key=lambda b: b.get("check_in_date", ""), reverse=True)
@@ -1216,7 +1311,6 @@ def get_bookings():
         logger.error(f"Error getting bookings: {str(e)}")
         return jsonify(success=False, message=f"Error getting bookings: {str(e)}")
 
-# Create a new booking
 @app.route("/create_booking", methods=["POST"])
 def create_booking():
     try:
@@ -1236,7 +1330,7 @@ def create_booking():
             "room": booking_data["room"],
             "guest_name": booking_data["guest_name"],
             "guest_mobile": booking_data["guest_mobile"],
-            "booking_date": datetime.now().strftime("%Y-%m-%d"),
+            "booking_date": datetime.now(IST).strftime("%Y-%m-%d"),
             "check_in_date": booking_data["check_in_date"],
             "check_out_date": booking_data["check_out_date"],
             "status": "confirmed",
@@ -1255,40 +1349,44 @@ def create_booking():
             payment_method = booking_data.get("payment_method", "cash")
             
             # Add to payment logs
-            logs[payment_method].append({
+            payment_log = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": paid_amount,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "type": "booking_advance"
+            }
+            
+            logs_ref.document(payment_method).update({
+                "entries": firestore.ArrayUnion([payment_log])
             })
             
             # Add to booking payments log specifically
-            logs["booking_payments"].append({
+            booking_payment = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": paid_amount,
                 "payment_method": payment_method,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "type": "advance"
+            }
+            
+            logs_ref.document("booking_payments").update({
+                "entries": firestore.ArrayUnion([booking_payment])
             })
             
             # Update totals
+            totals = get_totals()
             totals[payment_method] += paid_amount
             totals["advance_bookings"] += paid_amount
+            totals_ref.document('current_totals').set(totals)
         
-        # Add booking to data structure
-        if "bookings" not in data:
-            data["bookings"] = {}
-        
-        data["bookings"][booking_id] = booking
-        
-        # Save data
-        save_data(data)
+        # Add booking to Firestore
+        bookings_ref.document(booking_id).set(booking)
         
         logger.info(f"Booking created: {booking_id} for {booking['guest_name']}")
         return jsonify(success=True, booking_id=booking_id, message="Booking created successfully")
@@ -1297,18 +1395,19 @@ def create_booking():
         logger.error(f"Error creating booking: {str(e)}")
         return jsonify(success=False, message=f"Error creating booking: {str(e)}")
 
-# Update an existing booking
 @app.route("/update_booking", methods=["POST"])
 def update_booking():
     try:
         booking_data = request.json
         booking_id = booking_data.get("booking_id")
         
-        if not booking_id or booking_id not in data.get("bookings", {}):
+        # Check if booking exists
+        booking_doc = bookings_ref.document(booking_id).get()
+        if not booking_doc.exists:
             return jsonify(success=False, message="Invalid booking ID")
         
         # Get the existing booking
-        booking = data["bookings"][booking_id]
+        booking = booking_doc.to_dict()
         
         # Check if there's a new payment to process
         new_payment_amount = int(booking_data.get("new_payment", 0))
@@ -1316,31 +1415,41 @@ def update_booking():
             payment_method = booking_data.get("payment_method", "cash")
             
             # Add to payment logs
-            logs[payment_method].append({
+            payment_log = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": new_payment_amount,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "type": "booking_payment"
+            }
+            
+            logs_ref.document(payment_method).update({
+                "entries": firestore.ArrayUnion([payment_log])
             })
             
             # Add to booking payments log specifically
-            logs["booking_payments"].append({
+            booking_payment = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": new_payment_amount,
                 "payment_method": payment_method,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "type": "additional_payment"
+            }
+            
+            logs_ref.document("booking_payments").update({
+                "entries": firestore.ArrayUnion([booking_payment])
             })
             
             # Update totals
+            totals = get_totals()
             totals[payment_method] += new_payment_amount
             totals["advance_bookings"] += new_payment_amount
+            totals_ref.document('current_totals').set(totals)
             
             # Update booking paid amount and balance
             booking["paid_amount"] += new_payment_amount
@@ -1349,7 +1458,7 @@ def update_booking():
         # Update fields that can be modified
         updatable_fields = [
             "guest_name", "guest_mobile", "check_in_date", "check_out_date", 
-            "room", "notes", "guest_count", "total_amount"
+            "room", "notes", "guest_count", "total_amount", "status"
         ]
         
         for field in updatable_fields:
@@ -1361,12 +1470,8 @@ def update_booking():
             booking["total_amount"] = int(booking_data["total_amount"])
             booking["balance"] = booking["total_amount"] - booking["paid_amount"]
             
-        # Update status if provided
-        if "status" in booking_data:
-            booking["status"] = booking_data["status"]
-        
-        # Save data
-        save_data(data)
+        # Save updated booking
+        bookings_ref.document(booking_id).set(booking)
         
         logger.info(f"Booking updated: {booking_id}")
         return jsonify(success=True, booking=booking, message="Booking updated successfully")
@@ -1375,18 +1480,19 @@ def update_booking():
         logger.error(f"Error updating booking: {str(e)}")
         return jsonify(success=False, message=f"Error updating booking: {str(e)}")
 
-# Cancel a booking
 @app.route("/cancel_booking", methods=["POST"])
 def cancel_booking():
     try:
         booking_data = request.json
         booking_id = booking_data.get("booking_id")
         
-        if not booking_id or booking_id not in data.get("bookings", {}):
+        # Check if booking exists
+        booking_doc = bookings_ref.document(booking_id).get()
+        if not booking_doc.exists:
             return jsonify(success=False, message="Invalid booking ID")
         
         # Get the booking
-        booking = data["bookings"][booking_id]
+        booking = booking_doc.to_dict()
         
         # Process refund if requested
         refund_amount = int(booking_data.get("refund_amount", 0))
@@ -1394,19 +1500,25 @@ def cancel_booking():
             refund_method = booking_data.get("refund_method", "cash")
             
             # Log the refund
-            logs["refunds"].append({
+            refund_log = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": refund_amount,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "payment_mode": refund_method,
                 "note": "Booking cancellation refund"
+            }
+            
+            logs_ref.document("refunds").update({
+                "entries": firestore.ArrayUnion([refund_log])
             })
             
             # Update total refunds
+            totals = get_totals()
             totals["refunds"] += refund_amount
+            totals_ref.document('current_totals').set(totals)
             
             # Update booking paid amount and balance
             booking["paid_amount"] -= refund_amount
@@ -1414,11 +1526,11 @@ def cancel_booking():
         
         # Update booking status
         booking["status"] = "cancelled"
-        booking["cancellation_date"] = datetime.now().strftime("%Y-%m-%d")
+        booking["cancellation_date"] = datetime.now(IST).strftime("%Y-%m-%d")
         booking["cancellation_reason"] = booking_data.get("reason", "")
         
-        # Save data
-        save_data(data)
+        # Save updated booking
+        bookings_ref.document(booking_id).set(booking)
         
         logger.info(f"Booking cancelled: {booking_id}")
         return jsonify(success=True, message="Booking cancelled successfully")
@@ -1427,22 +1539,30 @@ def cancel_booking():
         logger.error(f"Error cancelling booking: {str(e)}")
         return jsonify(success=False, message=f"Error cancelling booking: {str(e)}")
 
-# Convert a booking to check-in
 @app.route("/convert_booking_to_checkin", methods=["POST"])
 def convert_booking_to_checkin():
     try:
         booking_data = request.json
         booking_id = booking_data.get("booking_id")
         
-        if not booking_id or booking_id not in data.get("bookings", {}):
+        # Check if booking exists
+        booking_doc = bookings_ref.document(booking_id).get()
+        if not booking_doc.exists:
             return jsonify(success=False, message="Invalid booking ID")
         
         # Get the booking
-        booking = data["bookings"][booking_id]
+        booking = booking_doc.to_dict()
         
         # Check if the room is currently vacant
         room_number = booking["room"]
-        if room_number not in rooms or rooms[room_number]["status"] != "vacant":
+        room_doc = rooms_ref.document(room_number).get()
+        
+        if not room_doc.exists:
+            return jsonify(success=False, message=f"Room {room_number} not found")
+            
+        room_data = room_doc.to_dict()
+        
+        if room_data["status"] != "vacant":
             return jsonify(success=False, message=f"Room {room_number} is not vacant")
         
         # Process remaining payment if provided
@@ -1450,28 +1570,39 @@ def convert_booking_to_checkin():
         payment_method = booking_data.get("payment_method", "cash")
         balance_after_payment = booking["balance"] - remaining_payment
         
+        # Get totals
+        totals = get_totals()
+        
         if remaining_payment > 0:
             # Add payment to logs
-            logs[payment_method].append({
+            payment_log = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": remaining_payment,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "type": "booking_final_payment"
+            }
+            
+            logs_ref.document(payment_method).update({
+                "entries": firestore.ArrayUnion([payment_log])
             })
             
             # Add to booking payments log
-            logs["booking_payments"].append({
+            booking_payment = {
                 "booking_id": booking_id,
                 "room": booking["room"],
                 "name": booking["guest_name"],
                 "amount": remaining_payment,
                 "payment_method": payment_method,
-                "time": datetime.now().strftime("%H:%M"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "type": "final_payment"
+            }
+            
+            logs_ref.document("booking_payments").update({
+                "entries": firestore.ArrayUnion([booking_payment])
             })
             
             # Update totals
@@ -1489,31 +1620,39 @@ def convert_booking_to_checkin():
         }
         
         # Update room to occupied
-        rooms[room_number]["status"] = "occupied"
-        rooms[room_number]["guest"] = guest
-        rooms[room_number]["checkin_time"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        rooms[room_number]["balance"] = balance_after_payment if balance_after_payment > 0 else 0
-        rooms[room_number]["add_ons"] = []
-        rooms[room_number]["renewal_count"] = 0
-        rooms[room_number]["last_renewal_time"] = None
+        rooms_ref.document(room_number).update({
+            "status": "occupied",
+            "guest": guest,
+            "checkin_time": datetime.now(IST).strftime("%Y-%m-%d %H:%M"),
+            "balance": balance_after_payment if balance_after_payment > 0 else 0,
+            "add_ons": [],
+            "renewal_count": 0,  # NEW
+            "last_renewal_time": None  # NEW
+        })
         
         # If there's still balance, add to balance log
         if balance_after_payment > 0:
-            logs["balance"].append({
+            balance_log = {
                 "room": room_number,
                 "name": guest["name"],
                 "amount": balance_after_payment,
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "note": "Remaining balance from booking"
+            }
+            
+            logs_ref.document("balance").update({
+                "entries": firestore.ArrayUnion([balance_log])
             })
+            
             totals["balance"] += balance_after_payment
+        
+        # Update totals
+        totals_ref.document('current_totals').set(totals)
         
         # Update booking status
         booking["status"] = "checked_in"
-        booking["check_in_time"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
-        # Save data
-        save_data(data)
+        booking["check_in_time"] = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+        bookings_ref.document(booking_id).set(booking)
         
         logger.info(f"Booking {booking_id} converted to check-in for room {room_number}")
         return jsonify(success=True, message=f"Guest checked in to Room {room_number}")
@@ -1539,11 +1678,13 @@ def check_availability():
         except ValueError:
             return jsonify(success=False, message="Invalid date format. Use YYYY-MM-DD")
         
-        # Get all bookings that overlap with the requested date range
-        bookings = data.get("bookings", {})
+        # Get all bookings from Firestore
+        bookings_stream = bookings_ref.stream()
         booked_rooms = set()
         
-        for booking_id, booking in bookings.items():
+        for booking_doc in bookings_stream:
+            booking = booking_doc.to_dict()
+            
             # Skip cancelled bookings
             if booking.get("status") == "cancelled":
                 continue
@@ -1561,19 +1702,23 @@ def check_availability():
                 booked_rooms.add(booking["room"])
         
         # For current occupancy, ONLY exclude rooms if check-in date is TODAY
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0)
         
         if check_in.date() == today.date():
-            # Only check currently occupied rooms if check-in is today
-            for room_number, room_info in rooms.items():
-                if room_info["status"] == "occupied":
-                    booked_rooms.add(room_number)
+            # Get all rooms from Firestore
+            rooms_stream = rooms_ref.stream()
+            
+            for room_doc in rooms_stream:
+                room_data = room_doc.to_dict()
+                if room_data["status"] == "occupied":
+                    booked_rooms.add(room_doc.id)
+        
+        # Get all room numbers from Firestore
+        all_rooms_stream = rooms_ref.stream()
+        all_rooms = [room_doc.id for room_doc in all_rooms_stream]
         
         # Compile available rooms (all rooms except those already booked for the requested dates)
-        available_rooms = []
-        for room_number in rooms.keys():
-            if room_number not in booked_rooms:
-                available_rooms.append(room_number)
+        available_rooms = [room for room in all_rooms if room not in booked_rooms]
         
         # Sort room numbers
         available_rooms.sort(key=lambda r: (int(r) if r.isdigit() else float('inf'), r))
@@ -1583,78 +1728,220 @@ def check_availability():
     except Exception as e:
         logger.error(f"Error checking availability: {str(e)}")
         return jsonify(success=False, message=f"Error checking availability: {str(e)}")
-    
-# Add this to app.py - Enhanced Google API Authentication
 
-# Improved Google credentials handling
-def setup_google_credentials():
-    """Initialize and validate Google API credentials with enhanced error logging"""
-    logger.info("Setting up Google API credentials...")
+# Helper function to fetch settlements
+def fetch_settlements():
+    # Get all settlements including pending, partial, paid, and cancelled
+    settlements_stream = settlements_ref.stream()
+    settlements_list = []
     
-    try:
-        # Try environment variable first
-        google_credentials = os.environ.get('GOOGLE_CREDENTIALS')
-        if google_credentials:
-            logger.info("Using Google credentials from environment variable")
-            try:
-                credentials_info = json.loads(google_credentials)
-                credentials = service_account.Credentials.from_service_account_info(
-                    credentials_info, scopes=SCOPES)
-                logger.info("Successfully loaded credentials from environment variable")
-                return credentials
-            except json.JSONDecodeError:
-                logger.error("Failed to parse GOOGLE_CREDENTIALS environment variable: Invalid JSON")
-            except Exception as e:
-                logger.error(f"Error creating credentials from environment variable: {str(e)}")
+    for doc in settlements_stream:
+        settlement_data = doc.to_dict()
+        settlement_data["id"] = doc.id  # Add the document ID to the data
+        settlements_list.append(settlement_data)
         
-        # Fall back to file
-        logger.info("Trying to load credentials from service account file")
-        SERVICE_ACCOUNT_FILE = 'lodge-service-account.json'
-        if os.path.exists(SERVICE_ACCOUNT_FILE):
-            try:
-                credentials = service_account.Credentials.from_service_account_file(
-                    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-                logger.info(f"Successfully loaded credentials from {SERVICE_ACCOUNT_FILE}")
-                return credentials
-            except Exception as e:
-                logger.error(f"Error loading credentials from file: {str(e)}")
+    return settlements_list
+
+@app.route("/get_pending_settlements", methods=["GET"])
+def get_pending_settlements_route():
+    try:
+        settlements = fetch_settlements()
+        
+        return jsonify(
+            success=True,
+            settlements=settlements
+        )
+    except Exception as e:
+        logger.error(f"Error fetching settlements: {str(e)}")
+        return jsonify(success=False, message=f"Error fetching settlements: {str(e)}")
+
+@app.route("/collect_settlement", methods=["POST"])
+def collect_settlement():
+    try:
+        data_json = request.json
+        settlement_id = data_json["settlement_id"]
+        payment_mode = data_json["payment_mode"]
+        
+        # Get partial payment amount (if provided)
+        payment_amount = int(data_json.get("payment_amount", 0))
+        
+        # Get discount amount (if provided)
+        discount_amount = int(data_json.get("discount_amount", 0))
+        discount_reason = data_json.get("discount_reason", "")
+        
+        # Find the settlement
+        settlement_doc = settlements_ref.document(settlement_id).get()
+        if not settlement_doc.exists:
+            return jsonify(success=False, message="Settlement not found")
+        
+        settlement = settlement_doc.to_dict()
+        
+        # Process the discount if provided
+        if discount_amount > 0:
+            if discount_amount > settlement["amount"]:
+                return jsonify(success=False, message=f"Discount amount (₹{discount_amount}) exceeds settlement amount (₹{settlement['amount']})")
+                
+            # Apply the discount
+            settlement["amount"] -= discount_amount
+            settlement["discount_amount"] = discount_amount
+            settlement["discount_reason"] = discount_reason
+            
+            # Log the discount
+            discount_log = {
+                "settlement_id": settlement_id,
+                "name": settlement["guest_name"],
+                "amount": discount_amount,
+                "reason": discount_reason,
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M")
+            }
+            
+            logs_ref.document("discounts").update({
+                "entries": firestore.ArrayUnion([discount_log])
+            })
+        
+        # Set default payment amount to full amount if not specified
+        if payment_amount <= 0:
+            payment_amount = settlement["amount"]
+        
+        # Validate payment amount
+        if payment_amount > settlement["amount"]:
+            return jsonify(success=False, message=f"Payment amount (₹{payment_amount}) exceeds settlement amount (₹{settlement['amount']})")
+        
+        # Process the payment
+        # Add to payment logs
+        payment_log = {
+            "room": settlement["room"],
+            "name": settlement["guest_name"],
+            "amount": payment_amount,
+            "time": datetime.now(IST).strftime("%H:%M"),
+            "date": datetime.now(IST).strftime("%Y-%m-%d"),
+            "settlement_id": settlement_id,
+            "note": "Settlement payment collected"
+        }
+        
+        logs_ref.document(payment_mode).update({
+            "entries": firestore.ArrayUnion([payment_log])
+        })
+        
+        # Update totals
+        totals = get_totals()
+        totals[payment_mode] += payment_amount
+        totals_ref.document('current_totals').set(totals)
+        
+        # Update settlement status
+        if payment_amount == settlement["amount"]:
+            # Full payment
+            settlement["status"] = "paid"
+            settlement["payment_date"] = datetime.now(IST).strftime("%Y-%m-%d")
+            settlement["payment_time"] = datetime.now(IST).strftime("%H:%M")
+            settlement["payment_mode"] = payment_mode
         else:
-            logger.error(f"Service account file {SERVICE_ACCOUNT_FILE} not found")
+            # Partial payment
+            settlement["status"] = "partial"
+            settlement["amount"] -= payment_amount
+            
+            if "payments" not in settlement:
+                settlement["payments"] = []
+                
+            settlement["payments"].append({
+                "amount": payment_amount,
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
+                "time": datetime.now(IST).strftime("%H:%M"),
+                "mode": payment_mode
+            })
         
-        logger.critical("No valid Google credentials found. API functionality will be disabled.")
-        return None
+        # Update settlement in Firestore
+        settlements_ref.document(settlement_id).set(settlement)
+        
+        if payment_amount == settlement["amount"]:
+            message = f"Full payment of ₹{payment_amount} collected successfully"
+        else:
+            message = f"Partial payment of ₹{payment_amount} collected. Remaining: ₹{settlement['amount']}"
+            
+        return jsonify(
+            success=True,
+            message=message,
+            payment_mode=payment_mode,
+            remaining=settlement["amount"]
+        )
+        
     except Exception as e:
-        logger.critical(f"Unexpected error setting up Google credentials: {str(e)}")
-        return None
+        logger.error(f"Error collecting settlement payment: {str(e)}")
+        return jsonify(success=False, message=f"Error collecting settlement payment: {str(e)}")
 
-# Use this to get services with proper error handling
-def get_google_services():
-    """Initialize and return Google Sheets and Drive services with better error handling"""
+@app.route("/cancel_settlement", methods=["POST"])
+def cancel_settlement():
     try:
-        credentials = setup_google_credentials()
-        if not credentials:
-            logger.error("Failed to obtain valid credentials")
-            return None, None
+        data_json = request.json
+        settlement_id = data_json["settlement_id"]
+        reason = data_json.get("reason", "Cancelled by user")
         
-        logger.info("Initializing Google API services...")
-        try:
-            sheets_service = build('sheets', 'v4', credentials=credentials)
-            logger.info("Successfully initialized Google Sheets service")
-        except Exception as e:
-            logger.error(f"Failed to build Sheets service: {str(e)}")
-            sheets_service = None
+        # Check if settlement exists
+        settlement_doc = settlements_ref.document(settlement_id).get()
+        if not settlement_doc.exists:
+            return jsonify(success=False, message="Settlement not found")
             
-        try:
-            drive_service = build('drive', 'v3', credentials=credentials)
-            logger.info("Successfully initialized Google Drive service")
-        except Exception as e:
-            logger.error(f"Failed to build Drive service: {str(e)}")
-            drive_service = None
+        settlement = settlement_doc.to_dict()
+        
+        # Get settlement info for logging
+        guest_name = settlement["guest_name"]
+        amount = settlement["amount"]
+        
+        if data_json.get("delete", False):
+            # Remove completely
+            settlements_ref.document(settlement_id).delete()
+        else:
+            # Mark as cancelled
+            settlement["status"] = "cancelled"
+            settlement["cancel_date"] = datetime.now(IST).strftime("%Y-%m-%d")
+            settlement["cancel_time"] = datetime.now(IST).strftime("%H:%M")
+            settlement["cancel_reason"] = reason
             
-        return sheets_service, drive_service
+            # Update in Firestore
+            settlements_ref.document(settlement_id).set(settlement)
+        
+        logger.info(f"Settlement cancelled: ₹{amount} from {guest_name}, reason: {reason}")
+        
+        return jsonify(
+            success=True,
+            message=f"Settlement of ₹{amount} cancelled successfully"
+        )
+        
     except Exception as e:
-        logger.error(f"Error connecting to Google services: {str(e)}")
-        return None, None
+        logger.error(f"Error cancelling settlement: {str(e)}")
+        return jsonify(success=False, message=f"Error cancelling settlement: {str(e)}")
+
+# NEW: Transaction metadata endpoints
+@app.route("/get_transaction_metadata", methods=["GET"])
+def get_transaction_metadata():
+    try:
+        # Get daily counters
+        counters_stream = counters_ref.stream()
+        daily_counters = {doc.id: doc.to_dict().get('count', 0) for doc in counters_stream}
+        
+        # Get transaction metadata
+        metadata_stream = metadata_ref.stream()
+        transaction_metadata = {doc.id: doc.to_dict() for doc in metadata_stream}
+        
+        return jsonify(
+            success=True, 
+            daily_counters=daily_counters,
+            transaction_metadata=transaction_metadata
+        )
+    except Exception as e:
+        logger.error(f"Error getting transaction metadata: {str(e)}")
+        return jsonify(success=False, message=f"Error getting transaction metadata: {str(e)}")
+
+# NEW: Cleanup endpoint
+@app.route("/cleanup_old_data", methods=["POST"])
+def cleanup_old_data_route():
+    try:
+        cleanup_old_counters()
+        return jsonify(success=True, message="Old data cleaned up successfully")
+    except Exception as e:
+        return jsonify(success=False, message=f"Error cleaning up data: {str(e)}")
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)

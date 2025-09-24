@@ -1,6 +1,3 @@
-// analytics.js - Enhanced version with additional cards and charts
-
-// Setup Chart.js defaults to prevent resizing issues
 function setupChartDefaults() {
   // Disable animations globally
   Chart.defaults.animation = false;
@@ -92,7 +89,7 @@ async function generateAnalytics(reportData) {
   generateTopServicesChart(reportData);
 }
 
-// Update summary cards with data
+// Update summary cards with data - FIXED NET REVENUE CALCULATION
 function updateSummaryCards(data) {
   const summaryContainer = document.getElementById("analytics-summary");
   if (!summaryContainer) return;
@@ -100,8 +97,12 @@ function updateSummaryCards(data) {
   const cashTotal = data.cash_total || 0;
   const onlineTotal = data.online_total || 0;
   const totalIncome = cashTotal + onlineTotal;
-  const totalExpense = data.expense_total || 0;
-  const netRevenue = data.total_revenue || 0;
+
+  // FIXED: Include both transaction and report expenses
+  const totalExpense = data.expense_total || 0; // This includes both daily and report expenses
+
+  // FIXED: Net revenue = Total Income - Total Expenses
+  const netRevenue = totalIncome - totalExpense;
 
   const checkins = data.checkins || 0;
   const renewals = data.renewals || 0;
@@ -799,6 +800,24 @@ function initializeAnalyticsView() {
   `;
 }
 
+// Helper function to format date to DD-MM-YYYY HH:MM - MOVED TO GLOBAL SCOPE FOR EXCEL EXPORT
+function formatDateTime(dateStr, timeStr) {
+  if (!dateStr) return "N/A";
+
+  try {
+    const [year, month, day] = dateStr.split("-");
+    const formattedDate = `${day}-${month}-${year}`;
+
+    if (timeStr) {
+      return `${formattedDate} ${timeStr}`;
+    } else {
+      return formattedDate;
+    }
+  } catch (e) {
+    return dateStr;
+  }
+}
+
 // Updated report generation to support both analytics and detailed reports
 async function generateEnhancedReport() {
   const startDate = document.getElementById("start-date")?.value;
@@ -853,6 +872,9 @@ async function generateEnhancedReport() {
     const data = await response.json();
 
     if (data.success) {
+      // Store the data globally for Excel export
+      window.reportData = data;
+
       // Update date range in the report summary
       updateReportDateRange(startDate, endDate);
 
@@ -926,21 +948,193 @@ function updateReportSummary(data) {
   document.getElementById("report-online-total").textContent = `₹${
     data.online_total || 0
   }`;
-  document.getElementById("report-addon-total").textContent = `₹${
-    data.addon_total || 0
-  }`;
   document.getElementById("report-refund-total").textContent = `₹${
     data.refund_total || 0
   }`;
   document.getElementById("report-expense-total").textContent = `₹${
     data.expense_total || 0
   }`;
-  document.getElementById("report-net-revenue").textContent = `₹${
-    data.total_revenue || 0
-  }`;
+
+  // FIXED: Calculate net revenue properly (Income - Expenses)
+  const totalIncome = (data.cash_total || 0) + (data.online_total || 0);
+  const totalExpense = data.expense_total || 0;
+  const netRevenue = totalIncome - totalExpense;
+
+  document.getElementById("report-net-revenue").textContent = `₹${netRevenue}`;
 }
 
-// Render compact report data
+// Excel Export Function - FIXED: Removed duplicate formatDateTime function
+function exportToExcel() {
+  if (!window.reportData) {
+    showNotification("No report data available for export", "error");
+    return;
+  }
+
+  // Check if XLSX is available
+  if (typeof XLSX === "undefined") {
+    showNotification(
+      "Excel export library not loaded. Please refresh the page and try again.",
+      "error"
+    );
+    return;
+  }
+
+  try {
+    const data = window.reportData;
+    const startDate = document.getElementById("start-date")?.value || "N/A";
+    const endDate = document.getElementById("end-date")?.value || "N/A";
+
+    // Create a new workbook
+    const workbook = XLSX.utils.book_new();
+
+    // Summary Sheet
+    const summaryData = [
+      ["LODGE MANAGEMENT REPORT"],
+      [`Report Period: ${startDate} to ${endDate}`],
+      [""],
+      ["REVENUE SUMMARY"],
+      ["Cash Payments", data.cash_total || 0],
+      ["Online Payments", data.online_total || 0],
+      ["Total Income", (data.cash_total || 0) + (data.online_total || 0)],
+      [""],
+      ["EXPENSE SUMMARY"],
+      ["Total Expenses", data.expense_total || 0],
+      [""],
+      ["NET SUMMARY"],
+      [
+        "Net Revenue",
+        (data.cash_total || 0) +
+          (data.online_total || 0) -
+          (data.expense_total || 0),
+      ],
+      ["Total Refunds", data.refund_total || 0],
+      ["Check-ins", data.checkins || 0],
+      ["Renewals", data.renewals || 0],
+    ];
+
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "Summary");
+
+    // Cash Payments Sheet
+    if (data.cash_logs && data.cash_logs.length > 0) {
+      const cashData = [
+        ["Room", "Guest Name", "Amount", "Date", "Time", "Item"],
+      ];
+      data.cash_logs.forEach((log) => {
+        cashData.push([
+          log.room || "N/A",
+          log.name || "N/A",
+          log.amount || 0,
+          formatDateTime(log.date, null),
+          log.time || "N/A",
+          log.item || "",
+        ]);
+      });
+      const cashSheet = XLSX.utils.aoa_to_sheet(cashData);
+      XLSX.utils.book_append_sheet(workbook, cashSheet, "Cash Payments");
+    }
+
+    // Online Payments Sheet
+    if (data.online_logs && data.online_logs.length > 0) {
+      const onlineData = [
+        ["Room", "Guest Name", "Amount", "Date", "Time", "Item"],
+      ];
+      data.online_logs.forEach((log) => {
+        onlineData.push([
+          log.room || "N/A",
+          log.name || "N/A",
+          log.amount || 0,
+          formatDateTime(log.date, null),
+          log.time || "N/A",
+          log.item || "",
+        ]);
+      });
+      const onlineSheet = XLSX.utils.aoa_to_sheet(onlineData);
+      XLSX.utils.book_append_sheet(workbook, onlineSheet, "Online Payments");
+    }
+
+    // Expenses Sheet - SORTED BY FORM TIME (OLDEST FIRST, LATEST LAST)
+    if (data.expense_logs && data.expense_logs.length > 0) {
+      // Sort expenses by date and time from the form - OLDEST FIRST
+      const sortedExpenses = [...data.expense_logs].sort((a, b) => {
+        const dateTimeA = new Date(`${a.date} ${a.time || "00:00"}`);
+        const dateTimeB = new Date(`${b.date} ${b.time || "00:00"}`);
+        return dateTimeA - dateTimeB; // Oldest first, latest last
+      });
+
+      const expenseData = [
+        [
+          "Date",
+          "Time",
+          "Category",
+          "Description",
+          "Amount",
+          "Payment Method",
+          "Type",
+        ],
+      ];
+      sortedExpenses.forEach((log) => {
+        expenseData.push([
+          formatDateTime(log.date, null),
+          log.time || "N/A",
+          (log.category || "other").charAt(0).toUpperCase() +
+            (log.category || "other").slice(1),
+          log.description || "N/A",
+          log.amount || 0,
+          (log.payment_method || "cash").toUpperCase(),
+          (log.expense_type || "transaction").charAt(0).toUpperCase() +
+            (log.expense_type || "transaction").slice(1),
+        ]);
+      });
+      const expenseSheet = XLSX.utils.aoa_to_sheet(expenseData);
+      XLSX.utils.book_append_sheet(workbook, expenseSheet, "Expenses");
+    }
+
+    // Refunds Sheet
+    if (data.refund_logs && data.refund_logs.length > 0) {
+      const refundData = [
+        [
+          "Room",
+          "Guest Name",
+          "Amount",
+          "Date",
+          "Time",
+          "Payment Mode",
+          "Note",
+        ],
+      ];
+      data.refund_logs.forEach((log) => {
+        refundData.push([
+          log.room || "N/A",
+          log.name || "N/A",
+          log.amount || 0,
+          log.date || "N/A",
+          log.time || "N/A",
+          log.payment_mode || "cash",
+          log.note || "",
+        ]);
+      });
+      const refundSheet = XLSX.utils.aoa_to_sheet(refundData);
+      XLSX.utils.book_append_sheet(workbook, refundSheet, "Refunds");
+    }
+
+    // Generate filename with current date
+    const now = new Date();
+    const filename = `Lodge_Report_${startDate}_to_${endDate}_${now.getFullYear()}-${String(
+      now.getMonth() + 1
+    ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}.xlsx`;
+
+    // Save the file
+    XLSX.writeFile(workbook, filename);
+
+    showNotification("Excel report exported successfully!", "success");
+  } catch (error) {
+    console.error("Error exporting to Excel:", error);
+    showNotification("Error exporting to Excel: " + error.message, "error");
+  }
+}
+
+// UPDATED: Render compact report data with collapsible sections (CLOSED BY DEFAULT) and no add-ons
 function renderCompactReportData(data) {
   const reportContent = document.getElementById("report-content");
   if (!reportContent) return;
@@ -953,15 +1147,24 @@ function renderCompactReportData(data) {
   const emptyState = reportContent.querySelector(".empty-state");
   if (emptyState) emptyState.remove();
 
-  // Start building HTML
-  let html = "";
+  // Start building HTML with Excel export button
+  let html = `
+    <div style="margin-bottom: 1rem; text-align: right;">
+      <button onclick="exportToExcel()" class="action-btn btn-success btn-sm">
+        <i class="fas fa-file-excel"></i> Export to Excel
+      </button>
+    </div>
+  `;
 
-  // Cash Payments logs
+  // Cash Payments logs - COLLAPSIBLE AND CLOSED BY DEFAULT
   let cashTotal = 0;
   html += `
     <div class="logs-container transaction-section">
-      <h3>Cash Payments</h3>
-      <div class="transaction-logs">
+      <h3 style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleSection('cash-section')">
+        Cash Payments 
+        <i class="fas fa-chevron-right" id="cash-section-icon"></i>
+      </h3>
+      <div class="transaction-logs" id="cash-section" style="display: none;">
   `;
 
   if (!data.cash_logs || data.cash_logs.length === 0) {
@@ -995,12 +1198,15 @@ function renderCompactReportData(data) {
 
   html += `</div></div>`;
 
-  // Online Payments logs
+  // Online Payments logs - COLLAPSIBLE AND CLOSED BY DEFAULT
   let onlineTotal = 0;
   html += `
     <div class="logs-container transaction-section">
-      <h3>Online Payments</h3>
-      <div class="transaction-logs">
+      <h3 style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleSection('online-section')">
+        Online Payments 
+        <i class="fas fa-chevron-right" id="online-section-icon"></i>
+      </h3>
+      <div class="transaction-logs" id="online-section" style="display: none;">
   `;
 
   if (!data.online_logs || data.online_logs.length === 0) {
@@ -1034,18 +1240,28 @@ function renderCompactReportData(data) {
 
   html += `</div></div>`;
 
-  // Expenses
+  // Expenses - COLLAPSIBLE AND CLOSED BY DEFAULT, SORTED BY FORM TIME (OLDEST FIRST)
   let expenseTotal = 0;
   html += `
     <div class="logs-container transaction-section">
-      <h3>Expenses</h3>
-      <div class="transaction-logs">
+      <h3 style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleSection('expense-section')">
+        Expenses 
+        <i class="fas fa-chevron-right" id="expense-section-icon"></i>
+      </h3>
+      <div class="transaction-logs" id="expense-section" style="display: none;">
   `;
 
   if (!data.expense_logs || data.expense_logs.length === 0) {
     html += '<div class="log-item">No expenses in this period</div>';
   } else {
-    data.expense_logs.forEach((log) => {
+    // FIXED: Sort expenses by form date and time - OLDEST FIRST, LATEST LAST
+    const sortedExpenses = [...data.expense_logs].sort((a, b) => {
+      const dateTimeA = new Date(`${a.date} ${a.time || "00:00"}`);
+      const dateTimeB = new Date(`${b.date} ${b.time || "00:00"}`);
+      return dateTimeA - dateTimeB; // Oldest first, latest last
+    });
+
+    sortedExpenses.forEach((log) => {
       expenseTotal += log.amount;
       const categoryDisplay =
         log.category.charAt(0).toUpperCase() + log.category.slice(1);
@@ -1061,7 +1277,10 @@ function renderCompactReportData(data) {
               ${log.description} 
               <span class="expense-category-badge">${categoryDisplay}</span>
             </div>
-            <div class="log-subtitle">${log.date} ${log.time || ""}</div>
+            <div class="log-subtitle">${formatDateTime(
+              log.date,
+              log.time
+            )}</div>
           </div>
           <div class="log-amount">₹${log.amount}</div>
         </div>
@@ -1081,12 +1300,15 @@ function renderCompactReportData(data) {
 
   html += `</div></div>`;
 
-  // Refunds
+  // Refunds - COLLAPSIBLE AND CLOSED BY DEFAULT
   let refundTotal = 0;
   html += `
     <div class="logs-container transaction-section">
-      <h3>Refunds</h3>
-      <div class="transaction-logs">
+      <h3 style="cursor: pointer; display: flex; justify-content: space-between; align-items: center;" onclick="toggleSection('refund-section')">
+        Refunds 
+        <i class="fas fa-chevron-right" id="refund-section-icon"></i>
+      </h3>
+      <div class="transaction-logs" id="refund-section" style="display: none;">
   `;
 
   if (!data.refund_logs || data.refund_logs.length === 0) {
@@ -1120,53 +1342,12 @@ function renderCompactReportData(data) {
 
   html += `</div></div>`;
 
-  // Add-ons
-  let addonTotal = 0;
-  html += `
-    <div class="logs-container transaction-section">
-      <h3>Add-on Services</h3>
-      <div class="transaction-logs">
-  `;
-
-  if (!data.addon_logs || data.addon_logs.length === 0) {
-    html += '<div class="log-item">No add-on services in this period</div>';
-  } else {
-    data.addon_logs.forEach((log) => {
-      addonTotal += log.price;
-      const paymentMethod = log.payment_method
-        ? `<span class="service-payment-badge ${log.payment_method}">${log.payment_method}</span>`
-        : "";
-
-      html += `
-        <div class="log-item">
-          <div class="log-details">
-            <div class="log-title">Room ${log.room} - ${
-        log.item
-      } ${paymentMethod}</div>
-            <div class="log-subtitle">${log.date} ${log.time || ""}</div>
-          </div>
-          <div class="log-amount">₹${log.price}</div>
-        </div>
-      `;
-    });
-
-    // Add section total
-    html += `
-      <div class="log-item section-total">
-        <div class="log-details">
-          <div class="log-title">Total Add-ons</div>
-        </div>
-        <div class="log-amount">₹${addonTotal}</div>
-      </div>
-    `;
-  }
-
-  html += `</div></div>`;
+  // NOTE: ADD-ONS SECTION REMOVED AS REQUESTED
 
   // Grand total summary
   const totalIncome = cashTotal + onlineTotal;
   const totalExpenses = expenseTotal;
-  const netRevenue = totalIncome - totalExpenses - refundTotal;
+  const netRevenue = totalIncome - totalExpenses; // FIXED: Subtract expenses from income
 
   html += `
     <div class="logs-container grand-total-section">
@@ -1204,6 +1385,22 @@ function renderCompactReportData(data) {
   reportContent.innerHTML = html;
 }
 
+// Function to toggle collapsible sections
+function toggleSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  const icon = document.getElementById(sectionId + "-icon");
+
+  if (section && icon) {
+    if (section.style.display === "none") {
+      section.style.display = "block";
+      icon.className = "fas fa-chevron-down";
+    } else {
+      section.style.display = "none";
+      icon.className = "fas fa-chevron-right";
+    }
+  }
+}
+
 // Initialize Analytics on document load
 document.addEventListener("DOMContentLoaded", function () {
   // Set up chart defaults to prevent resizing
@@ -1227,4 +1424,8 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
   }
+
+  // Make toggleSection function global
+  window.toggleSection = toggleSection;
+  window.exportToExcel = exportToExcel;
 });
